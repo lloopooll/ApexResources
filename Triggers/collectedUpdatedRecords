@@ -1,0 +1,31 @@
+// Trigger ........................................
+trigger BookingTrigger on Booking__c (before update) {
+
+    if (Trigger.isBefore && Trigger.isUpdate) {
+        BookingTriggerHelper.validateStatusChange(
+            Trigger.new,
+            Trigger.oldMap
+        );
+    }
+}
+
+
+// Helper Class ............................................
+public static List<Booking__c> getCancelledToConfirmedRecords(
+    List<Booking__c> newRecords,
+    Map<Id, Booking__c> oldMap
+) {
+    List<Booking__c> result = new List<Booking__c>();
+
+    for (Booking__c newRec : newRecords) {
+        Booking__c oldRec = oldMap.get(newRec.Id);
+
+        if (oldRec.Status__c == 'Cancelled' &&
+            newRec.Status__c == 'Confirmed') {
+
+            result.add(newRec);
+        }
+    }
+
+    return result;
+}
