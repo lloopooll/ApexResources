@@ -1,0 +1,73 @@
+// Trigger ..................................................................................................
+
+trigger OrderItemRollupTrigger on Order_Item__c (after insert, after update, after delete, after undelete) {
+
+    Set<Id> orderIds = new Set<Id>();
+
+    if (Trigger.isInsert || Trigger.isUndelete) {
+        for (Order_Item__c oi : Trigger.new) {
+            orderIds.add(oi.Order__c);
+        }
+    }
+
+    if (Trigger.isUpdate) {
+        for (Order_Item__c oi : Trigger.new) {
+            orderIds.add(oi.Order__c);
+        }
+        for (Order_Item__c oi : Trigger.old) {
+            orderIds.add(oi.Order__c);
+        }
+    }
+
+    if (Trigger.isDelete) {
+        for (Order_Item__c oi : Trigger.old) {
+            orderIds.add(oi.Order__c);
+        }
+    }
+
+    OrderItemRollupHandler.recalculate(orderIds);
+}
+
+// Helper .....................................................................
+
+public class OrderItemRollupHandler {
+
+    public static void recalculate(Set<Id> orderIds) {
+
+        if (orderIds.isEmpty()) return;
+
+        Map<Id, AggregateResult> aggMap = new Map<Id, AggregateResult>();
+
+        for (AggregateResult ar : [
+            SELECT Order__c orderId,
+                   COUNT(Id) totalCount,
+                   SUM(Quantity__c) totalQty
+            FROM Order_Item__c
+            WHERE Order__c IN :orderIds
+            GROUP BY Order__c
+        ]) {
+            aggMap.put((Id)ar.get('orderId'), ar);
+        }
+
+        List<Order__c> ordersToUpdate = new List<Order__c>();
+
+        for (Id orderId : orderIds) {
+
+            AggregateResult ar = aggMap.get(orderId);
+
+            Order__c o = new Order__c(Id = orderId);
+
+            if (ar != null) {
+                o.Total_Items__c = (Decimal) ar.get('totalCount');
+                o.Total_Quantity__c = (Decimal) ar.get('totalQty');
+            } else {
+                o.Total_Items__c = 0;
+                o.Total_Quantity__c = 0;
+            }
+
+            ordersToUpdate.add(o);
+        }
+
+        update ordersToUpdate;
+    }
+}
