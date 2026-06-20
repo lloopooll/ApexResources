@@ -1,0 +1,51 @@
+global class CancelUnpaidBookingBatch implements Database.Batchable<SObject> {
+
+    global Database.QueryLocator start(Database.BatchableContext bc) {
+
+        return Database.getQueryLocator([
+            SELECT Id, Status__c
+            FROM Booking__c
+            WHERE Status__c = 'Unpaid'
+        ]);
+    }
+
+    global void execute(Database.BatchableContext bc, List<Booking__c> scope) {
+
+        List<Booking__c> toUpdate = new List<Booking__c>();
+
+        for (Booking__c b : scope) {
+
+            b.Status__c = 'Cancelled';
+            toUpdate.add(b);
+        }
+
+        if (!toUpdate.isEmpty()) {
+            update toUpdate;
+        }
+    }
+
+    global void finish(Database.BatchableContext bc) {
+        System.debug('Unpaid bookings cancelled successfully.');
+    }
+}
+
+
+// Run Batch 
+
+global class CancelUnpaidBookingScheduler implements Schedulable {
+
+    global void execute(SchedulableContext sc) {
+
+        Database.executeBatch(new CancelUnpaidBookingBatch(), 200);
+    }
+}
+
+
+// Run every 30 min .....CRON
+
+String cronExp = '0 0/30 * * * ?';
+System.schedule(
+    'Cancel Unpaid Booking Every 30 Min',
+    cronExp,
+    new CancelUnpaidBookingScheduler()
+);
