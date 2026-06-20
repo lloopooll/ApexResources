@@ -1,0 +1,80 @@
+// Trigger .............................................
+trigger BookingTrigger on Booking__c (after update) {
+
+    if (Trigger.isAfter && Trigger.isUpdate) {
+        BookingTriggerHelper.sendCancellationEmails(
+            Trigger.new,
+            Trigger.oldMap
+        );
+    }
+}
+
+// Helper Class .........................................
+
+public class BookingTriggerHelper {
+
+    private static final String STATUS_CONFIRMED = 'Confirmed';
+    private static final String STATUS_CANCELLED = 'Cancelled';
+
+    public static void sendCancellationEmails(
+        List<Booking__c> newRecords,
+        Map<Id, Booking__c> oldMap
+    ) {
+
+        Set<Id> bookingIds = new Set<Id>();
+        Set<Id> contactIds  = new Set<Id>();
+
+        // Step 1: Find records where status changed Confirmed → Cancelled
+        for (Booking__c rec : newRecords) {
+
+            Booking__c oldRec = oldMap.get(rec.Id);
+
+            if (oldRec.Status__c == STATUS_CONFIRMED &&
+                rec.Status__c == STATUS_CANCELLED) {
+
+                bookingIds.add(rec.Id);
+
+                if (rec.Contact__c != null) {
+                    contactIds.add(rec.Contact__c);
+                }
+            }
+        }
+
+        if (bookingIds.isEmpty() || contactIds.isEmpty()) {
+            return;
+        }
+
+        // Step 2: Get Email Template
+        EmailTemplate template = [
+            SELECT Id
+            FROM EmailTemplate
+            WHERE DeveloperName = 'Booking_Cancellation'
+            LIMIT 1
+        ];
+
+        List<Messaging.SingleEmailMessage> emails =
+            new List<Messaging.SingleEmailMessage>();
+
+        // Step 3: Create emails using template
+        for (Booking__c rec : [
+            SELECT Id, Name, Status__c, Contact__c
+            FROM Booking__c
+            WHERE Id IN :bookingIds
+        ]) {
+
+            Messaging.SingleEmailMessage mail =
+                new Messaging.SingleEmailMessage();
+
+            mail.setTemplateId(template.Id);
+            mail.setTargetObjectId(rec.Contact__c); // Recipient (Contact)
+            mail.setWhatId(rec.Id);                 // Related Booking record
+            mail.setSaveAsActivity(false);
+
+            emails.add(mail);
+        }
+
+        if (!emails.isEmpty()) {
+            Messaging.sendEmail(emails);
+        }
+    }
+}
