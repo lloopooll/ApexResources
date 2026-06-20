@@ -1,0 +1,225 @@
+In Salesforce Apex, you generate a PDF using a **Visualforce page rendered as PDF**.
+
+---
+
+# 1. Create Visualforce Page (PDF Template)
+
+```xml id="vf1"
+<apex:page renderAs="pdf" standardController="Account">
+
+    <h1>Account Report</h1>
+
+    <p><b>Name:</b> {!Account.Name}</p>
+    <p><b>Phone:</b> {!Account.Phone}</p>
+    <p><b>Industry:</b> {!Account.Industry}</p>
+
+</apex:page>
+```
+
+---
+
+# 2. Generate PDF from Apex
+
+You can call the Visualforce page and get PDF as Blob.
+
+```java id="apex1"
+public class PdfGenerator {
+
+    public static Blob generateAccountPdf(Id accountId) {
+
+        PageReference pdfPage = Page.AccountPdfPage; 
+        pdfPage.getParameters().put('id', accountId);
+
+        Blob pdfBlob;
+
+        if (!Test.isRunningTest()) {
+            pdfBlob = pdfPage.getContentAsPDF();
+        } else {
+            pdfBlob = Blob.valueOf('Test PDF Content');
+        }
+
+        return pdfBlob;
+    }
+}
+```
+
+---
+
+# 3. Save PDF as File (ContentVersion)
+
+```java id="apex2"
+public class PdfGenerator {
+
+    public static void createAndSavePdf(Id accountId) {
+
+        PageReference pdfPage = Page.AccountPdfPage;
+        pdfPage.getParameters().put('id', accountId);
+
+        Blob pdfBlob = pdfPage.getContentAsPDF();
+
+        ContentVersion cv = new ContentVersion();
+        cv.Title = 'Account_Report';
+        cv.PathOnClient = 'Account.pdf';
+        cv.VersionData = pdfBlob;
+        cv.FirstPublishLocationId = accountId;
+
+        insert cv;
+    }
+}
+```
+
+---
+
+# 4. Trigger Example (Auto-generate PDF)
+
+```java id="trg1"
+trigger AccountTrigger on Account (after insert) {
+
+    for (Account acc : Trigger.new) {
+        PdfGenerator.createAndSavePdf(acc.Id);
+    }
+}
+```
+
+---
+
+# Important Limits
+
+* Cannot call `getContentAsPDF()` in bulk safely (callout-like limit)
+* ✔ Use Queueable for large volumes
+* ✔ Max PDF size ~1 MB (practical limit)
+* ✔ Visualforce page must be optimized
+
+---
+
+# 5. Best Practice (Production)
+
+Instead of trigger → use Queueable:
+
+```java id="q1"
+public class PdfQueueable implements Queueable {
+
+    Id accountId;
+
+    public PdfQueueable(Id accId) {
+        this.accountId = accId;
+    }
+
+    public void execute(QueueableContext qc) {
+
+        PageReference pdfPage = Page.AccountPdfPage;
+        pdfPage.getParameters().put('id', accountId);
+
+        Blob pdfBlob = pdfPage.getContentAsPDF();
+
+        ContentVersion cv = new ContentVersion();
+        cv.Title = 'Account_Report';
+        cv.PathOnClient = 'Account.pdf';
+        cv.VersionData = pdfBlob;
+        cv.FirstPublishLocationId = accountId;
+
+        insert cv;
+    }
+}
+
+
+
+----------------------------------------------------------------------------------------------------------
+Auto generate pdf using queueable
+----------------------------------------------------------------------------------------------------------
+
+generate a PDF automatically and store it in Salesforce Files.
+
+---
+
+#  Requirement
+
+* Generate PDF using Visualforce
+* Run asynchronously (Queueable)
+* Save as **File (ContentVersion)**
+* Trigger automatically (example: after insert)
+
+---
+
+#  1. Visualforce Page (PDF Template)
+
+```xml id="vf1"
+<apex:page renderAs="pdf" standardController="Account">
+
+    <h2>Account Report</h2>
+
+    <p><b>Name:</b> {!Account.Name}</p>
+    <p><b>Phone:</b> {!Account.Phone}</p>
+    <p><b>Industry:</b> {!Account.Industry}</p>
+
+</apex:page>
+```
+
+---
+
+#  2. Queueable Class (PDF Generator)
+
+public class AccountPdfQueueable implements Queueable {
+
+    private Id accountId;
+
+    public AccountPdfQueueable(Id accountId) {
+        this.accountId = accountId;
+    }
+
+    public void execute(QueueableContext context) {
+
+        try {
+
+            // Load Visualforce Page
+            PageReference pdfPage = Page.AccountPdfPage;
+            pdfPage.getParameters().put('id', accountId);
+
+            // Generate PDF
+            Blob pdfBlob = pdfPage.getContentAsPDF();
+
+            // Save as File
+            ContentVersion cv = new ContentVersion();
+            cv.Title = 'Account_Report_' + accountId;
+            cv.PathOnClient = 'Account.pdf';
+            cv.VersionData = pdfBlob;
+
+            insert cv;
+
+            // Link file to Account
+            ContentDocumentLink cdl = new ContentDocumentLink();
+            cdl.ContentDocumentId = [
+                SELECT ContentDocumentId
+                FROM ContentVersion
+                WHERE Id = :cv.Id
+            ].ContentDocumentId;
+
+            cdl.LinkedEntityId = accountId;
+            cdl.ShareType = 'V';
+            cdl.Visibility = 'AllUsers';
+
+            insert cdl;
+
+        } catch (Exception e) {
+            System.debug('PDF generation failed: ' + e.getMessage());
+        }
+    }
+}
+```
+
+---
+
+# 3. Trigger to Auto-Invoke Queueable
+
+trigger AccountTrigger on Account (after insert) {
+
+    for (Account acc : Trigger.new) {
+
+        System.enqueueJob(new AccountPdfQueueable(acc.Id));
+    }
+}
+```
+
+---
+
+
