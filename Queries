@@ -1,0 +1,12 @@
+// Filter records based on record type 
+SELECT Id, Name
+FROM Account
+WHERE RecordType.Name = 'Parent Account'
+
+
+// Filter records based on created by current logged in user
+List<Project__c> projects = [
+    SELECT Id, Name
+    FROM Project__c
+    WHERE CreatedById = :UserInfo.getUserId()
+];
