@@ -49,3 +49,28 @@ System.schedule(
     cronExp,
     new CancelUnpaidBookingScheduler()
 );
+
+
+// Run at midnight
+System.schedule(
+    'Cancel Unpaid Booking Midnight Job',
+    '0 0 0 * * ?',
+    new CancelUnpaidBookingScheduler()
+);
+
+
+// Run every hour 
+
+System.schedule(
+    'Cancel Unpaid Booking Hourly Job',
+    '0 0 * * * ?',
+    new CancelUnpaidBookingScheduler()
+);
+
+// Run at 4 pm 
+
+System.schedule(
+    '4PM Job',
+    '0 0 16 * * ?',
+    new CancelUnpaidBookingScheduler()
+);
