@@ -1,0 +1,55 @@
+// Trigger ..................................................................
+
+trigger BookingTrigger on Booking__c (after insert, after update) {
+
+    BookingApprovalHelper.submitForApproval(Trigger.new, Trigger.oldMap);
+}
+
+// Helper ..................................................................
+
+public class BookingApprovalHelper {
+
+    public static void submitForApproval(
+        List<Booking__c> newRecords,
+        Map<Id, Booking__c> oldMap
+    ) {
+
+        List<Approval.ProcessSubmitRequest> requests =
+            new List<Approval.ProcessSubmitRequest>();
+
+        for (Booking__c b : newRecords) {
+
+            Integer seatCount = (Integer) b.Seat_Count__c;
+
+            Boolean isNew = (oldMap == null);
+
+            Boolean isChanged = false;
+
+            if (!isNew) {
+                Booking__c oldRec = oldMap.get(b.Id);
+                isChanged = oldRec.Seat_Count__c != b.Seat_Count__c;
+            }
+
+            // Condition: seat count > 40
+            if (seatCount != null && seatCount > 40 && (isNew || isChanged)) {
+
+                Approval.ProcessSubmitRequest req =
+                    new Approval.ProcessSubmitRequest();
+
+                req.setObjectId(b.Id); // record to submit
+                req.setComments('Auto-submitted for approval (Seat count > 40)');
+                req.setSubmitterId(UserInfo.getUserId());
+
+                requests.add(req);
+            }
+        }
+
+        if (!requests.isEmpty()) {
+            for (Approval.ProcessSubmitRequest req : requests) {
+                Approval.ProcessResult result = Approval.process(req);
+
+                System.debug('Approval submitted: ' + result.isSuccess());
+            }
+        }
+    }
+}
