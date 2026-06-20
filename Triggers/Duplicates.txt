@@ -1,0 +1,56 @@
+
+trigger PreventDuplicates on Contact__c (before insert, before update) {
+
+    Set<String> batchKeys = new Set<String>();
+    Set<String> lookupIds = new Set<String>();
+
+    for (Contact__c rec : Trigger.new) {
+        if (rec.Lookup__c != null) {
+            lookupIds.add(rec.Lookup__c);
+        }
+    }
+
+    Map<String, Id> existingRecords = new Map<String, Id>();
+
+    for (Contact__c rec : [
+        SELECT Id, Name, Email__c, Date__c, Lookup__c
+        FROM Contact__c
+        WHERE Lookup__c IN :lookupIds
+    ]) {
+        String key =
+            (rec.Name == null ? '' : rec.Name.trim().toLowerCase()) + '|' +
+            (rec.Email__c == null ? '' : rec.Email__c.trim().toLowerCase()) + '|' +
+            String.valueOf(rec.Date__c) + '|' +
+            String.valueOf(rec.Lookup__c);
+
+        existingRecords.put(key, rec.Id);
+    }
+
+    for (Contact__c rec : Trigger.new) {
+
+        String key =
+            (rec.Name == null ? '' : rec.Name.trim().toLowerCase()) + '|' +
+            (rec.Email__c == null ? '' : rec.Email__c.trim().toLowerCase()) + '|' +
+            String.valueOf(rec.Date__c) + '|' +
+            String.valueOf(rec.Lookup__c);
+
+        // Duplicate within the same transaction
+        if (batchKeys.contains(key)) {
+            rec.addError(
+                'Duplicate record found in this transaction with the same Name, Email, Date and Lookup.'
+            );
+            continue;
+        }
+
+        batchKeys.add(key);
+
+        // Duplicate against existing records
+        if (existingRecords.containsKey(key)
+            && existingRecords.get(key) != rec.Id) {
+
+            rec.addError(
+                'A record already exists with the same Name, Email, Date and Lookup.'
+            );
+        }
+    }
+}
