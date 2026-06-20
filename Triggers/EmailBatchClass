@@ -1,3 +1,5 @@
+// Batch class to send emails.............................................
+
 global class BookingEmailTemplateBatch implements Database.Batchable<SObject> {
 
     global Database.QueryLocator start(Database.BatchableContext bc) {
@@ -50,3 +52,29 @@ global class BookingEmailTemplateBatch implements Database.Batchable<SObject> {
         System.debug('Batch Email Job Completed');
     }
 }
+
+// Scheduler class.............................................
+
+global class BookingEmailBatchScheduler implements Schedulable {
+
+    global void execute(SchedulableContext sc) {
+
+        BookingEmailTemplateBatch batch =
+            new BookingEmailTemplateBatch();
+
+        Database.executeBatch(batch, 200);
+    }
+}
+
+
+// CRON Expression.............................................
+
+String cronExp = '0 0 2 * * ?'; 
+// Every day at 2:00 AM
+
+System.schedule(
+    'Nightly Booking Email Batch',
+    cronExp,
+    new BookingEmailBatchScheduler()
+);
+
