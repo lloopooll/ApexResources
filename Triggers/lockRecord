@@ -1,0 +1,50 @@
+// trigger .............................................
+trigger BookingTrigger on Booking__c (before update) {
+
+    BookingTriggerHelper.lockConfirmedBookings(
+        Trigger.new,
+        Trigger.oldMap
+    );
+}
+
+// helper class ..........................................
+public class BookingTriggerHelper {
+
+    private static final String STATUS_CONFIRMED = 'Confirmed';
+
+    public static void lockConfirmedBookings(
+        List<Booking__c> newRecords,
+        Map<Id, Booking__c> oldMap
+    ) {
+
+        for (Booking__c rec : newRecords) {
+
+            Booking__c oldRec = oldMap.get(rec.Id);
+
+            // If already confirmed, lock the record
+            if (oldRec.Status__c == STATUS_CONFIRMED) {
+
+                rec.addError('Booking is confirmed and cannot be modified.');
+            }
+
+            // Optional: also lock when it is being changed TO confirmed
+            else if (rec.Status__c == STATUS_CONFIRMED &&
+                     oldRec.Status__c != STATUS_CONFIRMED) {
+
+                // You can allow or block transition if needed
+                // rec.addError('Cannot change status to Confirmed here.');
+            }
+        }
+    }
+}
+
+
+
+// Lock record in query processing
+
+Booking__c b = [
+    SELECT Id, Status__c
+    FROM Booking__c
+    WHERE Id = :bookingId
+    FOR UPDATE
+];
