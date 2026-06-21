@@ -1,0 +1,89 @@
+// JSON request Body
+
+{
+  "name": "John",
+  "email": "john@example.com",
+  "mobileNumber": "9876543210",
+  "createdDate": "2025-01-01"
+}
+
+// Endpoint 
+
+/services/apexrest/contacts/search
+
+// Rest Resources to fetch all the contacts where name , email , phone , createdDate Match
+
+@RestResource(urlMapping='/contacts/search')
+global with sharing class ContactRestService {
+
+    global class ContactRequest {
+        public String name;
+        public String email;
+        public String mobileNumber;
+        public Date createdDate;
+    }
+
+    global class ContactResponse {
+        public Id id;
+        public String name;
+        public String email;
+        public String mobilePhone;
+        public Datetime createdDate;
+    }
+
+    @HttpPost
+    global static List<ContactResponse> fetchContacts() {
+
+        RestRequest req = RestContext.request;
+
+        ContactRequest requestBody =
+            (ContactRequest) JSON.deserialize(
+                req.requestBody.toString(),
+                ContactRequest.class
+            );
+
+        String query =
+            'SELECT Id, Name, Email, MobilePhone, CreatedDate ' +
+            'FROM Contact WHERE Id != null';
+
+        if (String.isNotBlank(requestBody.name)) {
+            query += ' AND Name LIKE \'%' +
+                     String.escapeSingleQuotes(requestBody.name) +
+                     '%\'';
+        }
+
+        if (String.isNotBlank(requestBody.email)) {
+            query += ' AND Email = \'' +
+                     String.escapeSingleQuotes(requestBody.email) +
+                     '\'';
+        }
+
+        if (String.isNotBlank(requestBody.mobileNumber)) {
+            query += ' AND MobilePhone = \'' +
+                     String.escapeSingleQuotes(requestBody.mobileNumber) +
+                     '\'';
+        }
+
+        if (requestBody.createdDate != null) {
+            query += ' AND DAY_ONLY(CreatedDate) = ' +
+                     requestBody.createdDate;
+        }
+
+        List<Contact> contacts = Database.query(query);
+
+        List<ContactResponse> responseList =
+            new List<ContactResponse>();
+
+        for (Contact c : contacts) {
+            ContactResponse resp = new ContactResponse();
+            resp.id = c.Id;
+            resp.name = c.Name;
+            resp.email = c.Email;
+            resp.mobilePhone = c.MobilePhone;
+            resp.createdDate = c.CreatedDate;
+            responseList.add(resp);
+        }
+
+        return responseList;
+    }
+}
