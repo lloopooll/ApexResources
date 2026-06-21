@@ -1,0 +1,174 @@
+@RestResource(urlMapping='/accounts/bulk')
+global with sharing class RestResourceInsertAccWithCon {
+    
+    //Request Body
+    
+    /*
+{
+"accounts": [
+{
+"accountName": "Acme Corp",
+"phone": "1234567890",
+"website": "www.acme.com",
+"contacts": [
+{
+"firstName": "John",
+"lastName": "Doe",
+"email": "john@acme.com"
+},
+{
+"firstName": "Jane",
+"lastName": "Smith",
+"email": "jane@acme.com"
+}
+]
+},
+{
+"accountName": "Global Inc",
+"phone": "9876543210",
+"website": "www.global.com",
+"contacts": [
+{
+"firstName": "Mike",
+"lastName": "Johnson",
+"email": "mike@global.com"
+}
+]
+}
+]
+}
+
+
+
+// Response Body
+[
+{
+"contactIds": [
+"003fj000018u2I9AAI",
+"003fj000018u2IAAAY"
+],
+"accountName": "Acme Corp",
+"accountId": "001fj00001KxJdiAAF"
+},
+{
+"contactIds": [
+"003fj000018u2IBAAY"
+],
+"accountName": "Global Inc",
+"accountId": "001fj00001KxJdjAAF"
+}
+] 
+
+
+*/
+    global class ContactRequest {
+        public String firstName;
+        public String lastName;
+        public String email;
+        public String mobilePhone;
+    }
+    
+    global class AccountRequest {
+        public String accountName;
+        public String phone;
+        public String website;
+        public List<ContactRequest> contacts;
+    }
+    
+    global class RequestWrapper {
+        public List<AccountRequest> accounts;
+    }
+    
+    global class AccountResult {
+        public Id accountId;
+        public List<Id> contactIds;
+        public String accountName;
+    }
+    
+    @HttpPost
+    global static List<AccountResult> createAccounts() {
+        
+        RequestWrapper requestBody =
+            (RequestWrapper) JSON.deserialize(
+                RestContext.request.requestBody.toString(),
+                RequestWrapper.class
+            );
+        
+        List<AccountResult> results = new List<AccountResult>();
+        
+        if (requestBody == null || requestBody.accounts == null) {
+            return results;
+        }
+        
+        // Create Accounts
+        List<Account> accountsToInsert = new List<Account>();
+        
+        for (AccountRequest accReq : requestBody.accounts) {
+            accountsToInsert.add(
+                new Account(
+                    Name = accReq.accountName,
+                    Phone = accReq.phone,
+                    Website = accReq.website
+                )
+            );
+        }
+        
+        insert accountsToInsert;
+        
+        // Create Contacts
+        List<Contact> contactsToInsert = new List<Contact>();
+        
+        for (Integer i = 0; i < requestBody.accounts.size(); i++) {
+            
+            Account insertedAccount = accountsToInsert[i];
+            AccountRequest accReq = requestBody.accounts[i];
+            
+            if (accReq.contacts != null) {
+                
+                for (ContactRequest conReq : accReq.contacts) {
+                    
+                    contactsToInsert.add(
+                        new Contact(
+                            FirstName = conReq.firstName,
+                            LastName = conReq.lastName,
+                            Email = conReq.email,
+                            MobilePhone = conReq.mobilePhone,
+                            AccountId = insertedAccount.Id
+                        )
+                    );
+                }
+            }
+        }
+        
+        if (!contactsToInsert.isEmpty()) {
+            insert contactsToInsert;
+        }
+        
+        // Build response
+        Integer contactIndex = 0;
+        
+        for (Integer i = 0; i < requestBody.accounts.size(); i++) {
+            
+            AccountRequest accReq = requestBody.accounts[i];
+            
+            AccountResult result = new AccountResult();
+            result.accountId = accountsToInsert[i].Id;
+            result.accountName = accReq.accountName;
+            result.contactIds = new List<Id>();
+            
+            if (accReq.contacts != null) {
+                
+                for (Integer j = 0; j < accReq.contacts.size(); j++) {
+                    result.contactIds.add(
+                        contactsToInsert[contactIndex].Id
+                    );
+                    contactIndex++;
+                }
+            }
+            
+            results.add(result);
+        }
+        
+        return results;
+    }
+}
