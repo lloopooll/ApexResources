@@ -1,0 +1,192 @@
+// separate Wrapper class
+
+global class AccountContactWrapper {
+    
+    global class ContactWrapper {
+        public String firstName;
+        public String lastName;
+        public String email;
+        public String mobilePhone;
+    }
+    
+    global class AccountWrapper {
+        public String accountName;
+        public String phone;
+        public String website;
+        public List<ContactWrapper> contacts;
+    }
+    
+    public List<AccountWrapper> accounts;
+}
+
+.............................................................
+
+// Batch Class 
+
+..............................................................
+
+global class AccountContactBatch implements Database.Batchable<Integer> {
+
+    private AccountContactWrapper wrapperData;
+
+    public AccountContactBatch(AccountContactWrapper wrapperData) {
+        this.wrapperData = wrapperData;
+    }
+
+    global Iterable<Integer> start(Database.BatchableContext bc) {
+
+        List<Integer> indices = new List<Integer>();
+
+        for (Integer i = 0; i < wrapperData.accounts.size(); i++) {
+            indices.add(i);
+        }
+
+        return indices;
+    }
+
+    global void execute(Database.BatchableContext bc, List<Integer> scope) {
+
+        List<Account> accountsToInsert = new List<Account>();
+
+        Map<Integer, AccountContactWrapper.AccountWrapper> indexMap =
+            new Map<Integer, AccountContactWrapper.AccountWrapper>();
+
+        // Prepare Accounts
+        for (Integer i : scope) {
+
+            AccountContactWrapper.AccountWrapper aw =
+                wrapperData.accounts[i];
+
+            indexMap.put(i, aw);
+
+            accountsToInsert.add(
+                new Account(
+                    Name = aw.accountName,
+                    Phone = aw.phone,
+                    Website = aw.website
+                )
+            );
+        }
+
+        // Insert Accounts (partial success enabled)
+        Database.SaveResult[] accResults =
+            Database.insert(accountsToInsert, false);
+
+        Map<Integer, Id> accountIdMap = new Map<Integer, Id>();
+
+        Integer idx = 0;
+
+        for (Integer i : scope) {
+            if (accResults[idx].isSuccess()) {
+                accountIdMap.put(i, accResults[idx].getId());
+            }
+            idx++;
+        }
+
+        // Prepare Contacts
+        List<Contact> contactsToInsert = new List<Contact>();
+
+        for (Integer i : scope) {
+
+            AccountContactWrapper.AccountWrapper aw =
+                indexMap.get(i);
+
+            if (aw.contacts == null || !accountIdMap.containsKey(i)) {
+                continue;
+            }
+
+            for (AccountContactWrapper.ContactWrapper cw : aw.contacts) {
+
+                contactsToInsert.add(
+                    new Contact(
+                        FirstName = cw.firstName,
+                        LastName = cw.lastName,
+                        Email = cw.email,
+                        MobilePhone = cw.mobilePhone,
+                        AccountId = accountIdMap.get(i)
+                    )
+                );
+            }
+        }
+
+        if (!contactsToInsert.isEmpty()) {
+            Database.insert(contactsToInsert, false);
+        }
+    }
+
+    global void finish(Database.BatchableContext bc) {
+        System.debug('Account & Contact Batch Completed');
+    }
+}
+
+............................................................................
+
+// Rest Resource
+
+.............................................................................
+
+@RestResource(urlMapping='/accounts/batch')
+global with sharing class RestResAccWithConBatch {
+
+    @HttpPost
+    global static String submitRequest() {
+
+        String requestBody =
+            RestContext.request.requestBody.toString();
+
+        // Deserialize JSON → Wrapper
+        AccountContactWrapper wrapper =
+            (AccountContactWrapper) JSON.deserialize(
+                requestBody,
+                AccountContactWrapper.class
+            );
+
+        // Start Batch
+        Id batchId = Database.executeBatch(
+            new AccountContactBatch(wrapper),
+            200
+        );
+
+        return 'Batch started successfully. BatchId = ' + batchId;
+    }
+}
+
+
+...........................................................................
+
+Request 
+
+..............................................................................
+
+{
+  "accounts": [
+    {
+      "accountName": "Acme Corp",
+      "phone": "123456",
+      "website": "acme.com",
+      "contacts": [
+        {
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john@acme.com",
+          "mobilePhone": "9999999999"
+        },
+        {
+          "firstName": "Jane",
+          "lastName": "Smith",
+          "email": "jane@acme.com",
+          "mobilePhone": "8888888888"
+        }
+      ]
+    }
+  ]
+}
+
+
+.....................................................................................
+
+Response
+
+......................................................................................
+
+"Batch started successfully. BatchId = 707fj00000ew2J4AAI"
