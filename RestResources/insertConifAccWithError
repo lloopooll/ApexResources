@@ -1,0 +1,253 @@
+{
+  "records": [
+    {
+      "accountName": "Acme Corp",
+      "contact": {
+        "contactName": "John Doe",
+        "email": "john@acme.com"
+      }
+    },
+    {
+      "accountName": "Unknown Account",
+      "contact": {
+        "contactName": "Mike Smith",
+        "email": "mike@abc.com"
+      }
+    }
+  ]
+}
+
+...................................................
+
+{
+    "success": [],
+    "errors": [
+        {
+            "errorMessage": "Account does not exist",
+            "contactName": null,
+            "accountName": "Unknown Account"
+        },
+        {
+            "errorMessage": "Use one of these records?",
+            "contactName": "John Doe",
+            "accountName": "Acme Corp"
+        }
+    ]
+}
+
+......................................................
+
+@RestResource(urlMapping='/account-contact/create')
+global with sharing class RestResAccConWithError {
+
+    //========================
+    // Request Classes
+    //========================
+    global class ContactRequest {
+        public String contactName;
+        public String email;
+    }
+
+    global class AccountRequest {
+        public String accountName;
+        public ContactRequest contact;
+    }
+
+    global class RequestWrapper {
+        public List<AccountRequest> records;
+    }
+
+    //========================
+    // Response Classes
+    //========================
+    global class ErrorResponse {
+        public String accountName;
+        public String contactName;
+        public String errorMessage;
+    }
+
+    global class SuccessResponse {
+        public String accountName;
+        public Id accountId;
+        public Id contactId;
+        public String message;
+    }
+
+    global class FinalResponse {
+        public List<SuccessResponse> success = new List<SuccessResponse>();
+        public List<ErrorResponse> errors = new List<ErrorResponse>();
+    }
+
+    //========================
+    // POST METHOD
+    //========================
+    @HttpPost
+    global static FinalResponse createContacts() {
+
+        FinalResponse res = new FinalResponse();
+
+        try {
+
+            RequestWrapper req =
+                (RequestWrapper) JSON.deserialize(
+                    RestContext.request.requestBody.toString(),
+                    RequestWrapper.class
+                );
+
+            if (req == null || req.records == null) {
+                res.errors.add(createError(null, null, 'Request body is empty'));
+                return res;
+            }
+
+            //========================
+            // Collect Account Names
+            //========================
+            Set<String> accNames = new Set<String>();
+
+            for (AccountRequest r : req.records) {
+                if (String.isNotBlank(r.accountName)) {
+                    accNames.add(r.accountName);
+                }
+            }
+
+            //========================
+            // Query existing Accounts
+            //========================
+            Map<String, Account> accMap = new Map<String, Account>();
+
+            for (Account acc : [
+                SELECT Id, Name
+                FROM Account
+                WHERE Name IN :accNames
+            ]) {
+                accMap.put(acc.Name, acc);
+            }
+
+            //========================
+            // Process each record
+            //========================
+            List<Contact> contactsToInsert = new List<Contact>();
+            List<ContactRequest> validContactRefs = new List<ContactRequest>();
+            List<String> relatedAccountNames = new List<String>();
+
+            for (AccountRequest r : req.records) {
+
+                try {
+
+                    // Validation: Account name required
+                    if (String.isBlank(r.accountName)) {
+                        res.errors.add(createError(null, null, 'Account name is required'));
+                        continue;
+                    }
+
+                    // Check account existence
+                    if (!accMap.containsKey(r.accountName)) {
+                        res.errors.add(createError(r.accountName, null, 'Account does not exist'));
+                        continue;
+                    }
+
+                    Account acc = accMap.get(r.accountName);
+
+                    // Validate contact
+                    if (r.contact == null) {
+                        res.errors.add(createError(r.accountName, null, 'Contact details missing'));
+                        continue;
+                    }
+
+                    if (String.isBlank(r.contact.contactName)) {
+                        res.errors.add(createError(r.accountName, null, 'Contact name is required'));
+                        continue;
+                    }
+
+                    if (String.isBlank(r.contact.email)) {
+                        res.errors.add(createError(r.accountName, r.contact.contactName, 'Email is required'));
+                        continue;
+                    }
+
+                    // Split contact name into First/Last
+                    String firstName = '';
+                    String lastName = r.contact.contactName;
+
+                    if (r.contact.contactName.contains(' ')) {
+                        firstName = r.contact.contactName.substringBefore(' ');
+                        lastName = r.contact.contactName.substringAfter(' ');
+                    }
+
+                    contactsToInsert.add(
+                        new Contact(
+                            FirstName = firstName,
+                            LastName = lastName,
+                            Email = r.contact.email,
+                            AccountId = acc.Id
+                        )
+                    );
+
+                    validContactRefs.add(r.contact);
+                    relatedAccountNames.add(r.accountName);
+
+                } catch (Exception e) {
+                    res.errors.add(createError(
+                        r.accountName,
+                        (r.contact != null ? r.contact.contactName : null),
+                        e.getMessage()
+                    ));
+                }
+            }
+
+            //========================
+            // Insert Contacts
+            //========================
+            if (!contactsToInsert.isEmpty()) {
+
+                Database.SaveResult[] srList =
+                    Database.insert(contactsToInsert, false);
+
+                for (Integer i = 0; i < srList.size(); i++) {
+
+                    if (srList[i].isSuccess()) {
+
+                        SuccessResponse s = new SuccessResponse();
+                        s.accountName = relatedAccountNames[i];
+                        s.contactId = srList[i].getId();
+                        s.message = 'Contact created successfully';
+
+                        res.success.add(s);
+
+                    } else {
+
+                        for (Database.Error err : srList[i].getErrors()) {
+
+                            res.errors.add(
+                                createError(
+                                    relatedAccountNames[i],
+                                    validContactRefs[i].contactName,
+                                    err.getMessage()
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception ex) {
+            res.errors.add(createError(null, null, ex.getMessage()));
+        }
+
+        return res;
+    }
+
+    //========================
+    // Helper
+    //========================
+    private static ErrorResponse createError(
+        String accName,
+        String contactName,
+        String msg
+    ) {
+        ErrorResponse e = new ErrorResponse();
+        e.accountName = accName;
+        e.contactName = contactName;
+        e.errorMessage = msg;
+        return e;
+    }
+}
