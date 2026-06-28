@@ -1,0 +1,205 @@
+// JSON Body
+
+[
+  {
+    "accountRecord": {
+      "Name": "Tech Innovators Inc.",
+      "Industry": "Technology"
+    },
+    "relatedContacts": [
+      {
+        "FirstName": "Alice",
+        "LastName": "Smith",
+        "Email": "alice@example.com"
+      },
+      {
+        "FirstName": "Bob",
+        "LastName": "Jones",
+        "Email": "bob@example.com"
+      }
+    ]
+  },
+  {
+    "accountRecord": {
+      "Industry": "Finance"
+    },
+    "relatedContacts": [
+      {
+        "FirstName": "Charlie",
+        "LastName": "Brown"
+      }
+    ]
+  },
+  {
+    "accountRecord": {
+      "Name": "Design Studio LLC",
+      "Phone": "555-1234"
+    },
+    "relatedContacts": [
+      {
+        "FirstName": "David",
+        "Email": "david@example.com"
+      },
+      {
+        "FirstName": "Eve",
+        "LastName": "Adams"
+      }
+    ]
+  }
+]
+
+
+-------------------------------------------
+
+JSON Response
+
+--------------------------------------------
+{
+    "errorDetails": [
+        {
+            "recordType": "Account",
+            "errorMessage": "Account Failed (Tech Innovators Inc.): Account should not be of industry type"
+        },
+        {
+            "recordType": "Account",
+            "errorMessage": "Account Failed (Unknown Name): Required fields are missing: [Name]"
+        },
+        {
+            "recordType": "Contact",
+            "errorMessage": "Contact Failed (Unknown LastName): Required fields are missing: [LastName]"
+        }
+    ],
+    "contactSuccessCount": 1,
+    "contactFailedCount": 1,
+    "accountSuccessCount": 1,
+    "accountFailedCount": 2
+}
+
+
+--------------------------------------------------
+
+Rest Resource
+
+-----------------------------------------------------
+
+@RestResource(urlMapping='/AccountContactSync/*')
+global with sharing class RestResourceError {
+
+    // --- Wrapper Classes for the Request ---
+    global class AccountContactPayload {
+        public Account accountRecord;
+        public List<Contact> relatedContacts;
+    }
+
+    // --- Wrapper Classes for the Response ---
+    global class ResponseWrapper {
+        public Integer accountSuccessCount = 0;
+        public Integer accountFailedCount = 0;
+        public Integer contactSuccessCount = 0;
+        public Integer contactFailedCount = 0;
+        public List<ErrorDetail> errorDetails = new List<ErrorDetail>();
+    }
+
+    global class ErrorDetail {
+        public String recordType;
+        public String errorMessage;
+        
+        public ErrorDetail(String recordType, String errorMessage) {
+            this.recordType = recordType;
+            this.errorMessage = errorMessage;
+        }
+    }
+
+    @HttpPost
+    global static ResponseWrapper createRecords() {
+        RestRequest req = RestContext.request;
+        RestResponse res = RestContext.response;
+        ResponseWrapper response = new ResponseWrapper();
+        
+        try {
+            // 1. Safeguard against empty payloads
+            if (req.requestBody == null || String.isBlank(req.requestBody.toString())) {
+                if (res != null) res.statusCode = 400; 
+                response.errorDetails.add(new ErrorDetail('System Error', 'Request body cannot be empty.'));
+                return response;
+            }
+
+            // 2. Deserialize the incoming JSON payload
+            String requestBody = req.requestBody.toString();
+            List<AccountContactPayload> payloads = (List<AccountContactPayload>) JSON.deserialize(requestBody, List<AccountContactPayload>.class);
+            
+            if (payloads == null || payloads.isEmpty()) {
+                if (res != null) res.statusCode = 200;
+                return response;
+            }
+
+            List<Account> accountsToInsert = new List<Account>();
+            for (AccountContactPayload payload : payloads) {
+                accountsToInsert.add(payload.accountRecord);
+            }
+            
+            // 3. Insert Accounts using USER_MODE
+            Database.SaveResult[] accResults = Database.insert(accountsToInsert, false, AccessLevel.USER_MODE);
+            
+            List<Contact> contactsToInsert = new List<Contact>();
+            
+            // 4. Process Account results and link Contacts
+            for (Integer i = 0; i < accResults.size(); i++) {
+                Database.SaveResult sr = accResults[i];
+                if (sr.isSuccess()) {
+                    response.accountSuccessCount++; // Increment Account Success
+                    
+                    // Link related contacts to the new Account Id
+                    if (payloads[i].relatedContacts != null && !payloads[i].relatedContacts.isEmpty()) {
+                        for (Contact con : payloads[i].relatedContacts) {
+                            con.AccountId = sr.getId();
+                            contactsToInsert.add(con);
+                        }
+                    }
+                } else {
+                    response.accountFailedCount++; // Increment Account Failure
+                    String accName = String.isNotBlank(accountsToInsert[i].Name) ? accountsToInsert[i].Name : 'Unknown Name';
+                    String errMsg = 'Account Failed (' + accName + '): ';
+                    
+                    for(Database.Error err : sr.getErrors()) {
+                        errMsg += err.getMessage() + ' ';
+                    }
+                    response.errorDetails.add(new ErrorDetail('Account', errMsg.trim()));
+                }
+            }
+            
+            // 5. Insert Contacts using USER_MODE
+            if (!contactsToInsert.isEmpty()) {
+                Database.SaveResult[] conResults = Database.insert(contactsToInsert, false, AccessLevel.USER_MODE);
+                
+                for (Integer i = 0; i < conResults.size(); i++) {
+                    Database.SaveResult sr = conResults[i];
+                    if (sr.isSuccess()) {
+                        response.contactSuccessCount++; // Increment Contact Success
+                    } else {
+                        response.contactFailedCount++; // Increment Contact Failure
+                        String conName = String.isNotBlank(contactsToInsert[i].LastName) ? contactsToInsert[i].LastName : 'Unknown LastName';
+                        String errMsg = 'Contact Failed (' + conName + '): ';
+                        
+                        for(Database.Error err : sr.getErrors()) {
+                            errMsg += err.getMessage() + ' ';
+                        }
+                        response.errorDetails.add(new ErrorDetail('Contact', errMsg.trim()));
+                    }
+                }
+            }
+            
+            if (res != null) {
+                res.statusCode = 200;
+            }
+            
+        } catch (Exception e) {
+            if (res != null) {
+                res.statusCode = 500;
+            }
+            response.errorDetails.add(new ErrorDetail('System Error', e.getMessage()));
+        }
+        
+        return response;
+    }
+}
