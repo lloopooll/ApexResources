@@ -1,0 +1,95 @@
+// Trigger helper class 
+
+public class ContactMergeHelper {
+
+    // The @future annotation runs this process asynchronously
+    @future
+    public static void mergeDuplicatesAsync(Set<Id> newContactIds) {
+        
+        // 1. Query the contacts that triggered the execution
+        List<Contact> triggeredContacts = [
+            SELECT Id, FirstName, LastName, Email, AccountId 
+            FROM Contact 
+            WHERE Id IN :newContactIds
+        ];
+
+        // 2. Build sets to query potential duplicates in bulk
+        Set<String> emails = new Set<String>();
+        Set<String> firstNames = new Set<String>();
+        Set<String> lastNames = new Set<String>();
+        Set<Id> accountIds = new Set<Id>();
+
+        for (Contact c : triggeredContacts) {
+            // Only check contacts that have the required matching criteria
+            if (String.isNotBlank(c.Email) && c.AccountId != null) {
+                emails.add(c.Email);
+                firstNames.add(c.FirstName);
+                lastNames.add(c.LastName);
+                accountIds.add(c.AccountId);
+            }
+        }
+
+        // Exit early if there's no valid data to check
+        if (emails.isEmpty()) return;
+
+        // 3. Query existing contacts (excluding the newly triggered ones)
+        // Ordered by CreatedDate so the oldest record acts as the Master
+        List<Contact> existingContacts = [
+            SELECT Id, FirstName, LastName, Email, AccountId 
+            FROM Contact 
+            WHERE Email IN :emails 
+              AND FirstName IN :firstNames 
+              AND LastName IN :lastNames 
+              AND AccountId IN :accountIds
+              AND Id NOT IN :newContactIds
+            ORDER BY CreatedDate ASC
+        ];
+
+        // 4. Create a map of Master records using a compound key for exact matching
+        Map<String, Contact> masterContactMap = new Map<String, Contact>();
+        for (Contact existing : existingContacts) {
+            String matchKey = existing.FirstName + existing.LastName + existing.Email + existing.AccountId;
+            
+            // Because of the ORDER BY, the first one we map is the oldest
+            if (!masterContactMap.containsKey(matchKey)) {
+                masterContactMap.put(matchKey, existing);
+            }
+        }
+
+        // 5. Execute the merge
+        for (Contact newCon : triggeredContacts) {
+            String matchKey = newCon.FirstName + newCon.LastName + newCon.Email + newCon.AccountId;
+            
+            if (masterContactMap.containsKey(matchKey)) {
+                Contact masterRecord = masterContactMap.get(matchKey);
+                
+                try {
+                    // Syntax: merge MasterRecord DuplicateRecord;
+                    // The duplicate (newCon) is deleted, its related lists move to the Master
+                    merge masterRecord newCon;
+                } catch (DmlException e) {
+                    System.debug('Merge failed for Contact ' + newCon.Id + ': ' + e.getMessage());
+                }
+            }
+        }
+    }
+}
+
+
+// Trigger 
+
+trigger ContactMergeTrigger on Contact (after insert, after update) {
+    
+    // Safety check: Prevent recursive loops. 
+    // If the merge itself causes an update, we don't want to fire the future method again.
+    if (System.isFuture() || System.isBatch()) {
+        return; 
+    }
+
+    if (Trigger.isAfter) {
+        if (Trigger.isInsert || Trigger.isUpdate) {
+            // Pass the Map's KeySet (the Contact IDs) to the helper class
+            ContactMergeHelper.mergeDuplicatesAsync(Trigger.newMap.keySet());
+        }
+    }
+}
