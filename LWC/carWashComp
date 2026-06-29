@@ -1,0 +1,135 @@
+-------------------------------------------------
+// HTML
+-------------------------------------------------
+  <template>
+    <lightning-card title="Car Wash Waiting List" icon-name="standard:contact" >
+        <div slot="actions">
+            <lightning-button label="Refresh" icon-name="utility:refresh" onclick={handleRefresh} class="slds-m-right_x-small"></lightning-button>
+            <lightning-button label="Book" icon-name="utility:add" variant="brand" onclick={openStandardNewRecordPage}></lightning-button>
+        </div>
+        
+        <div class="slds-m-around_medium slds-box slds-box_x-small slds-theme_default">
+            <template if:true={data}>
+                <lightning-datatable 
+                    data={data}
+                    columns={columns}
+                    key-field="id"
+                    sorted-by={sortBy}
+                    sorted-direction={sortDirection}
+                    onsort={doSorting}
+                    hide-checkbox-column="true"
+                    class="slds-table_bordered">
+                </lightning-datatable>
+            </template>
+        </div>
+    </lightning-card>
+</template>
+-------------------------------------------------
+// JS
+-------------------------------------------------
+      import { LightningElement, wire, track } from 'lwc';
+import getRecords from '@salesforce/apex/CarWashApexController.getRecords';
+import { NavigationMixin } from 'lightning/navigation';
+
+export default class DataTableSortingLWC extends NavigationMixin(LightningElement) {
+    @track data;
+    @track sortBy;
+    @track sortDirection;
+
+    // Define columns inside the class so we can dynamically look up field values
+    columns = [
+        { label: 'Name', fieldName: 'Customer_Name__c', type: 'text', sortable: true },
+        { label: 'Car Type', fieldName: 'Car_Type__c', sortable: true },
+        { label: 'Washing Center', fieldName: 'Washing_Center__c', type: 'text', sortable: true },
+        { label: 'Cost', fieldName: 'Cost__c', type: 'number', sortable: true },
+        { label: 'Waiting Time', fieldName: 'Waiting_Time_Formatted__c', sortable: true },
+        { 
+            label: 'Status', 
+            fieldName: 'Status__c', 
+            type: 'text', 
+            sortable: true,
+            // THIS IS THE TRICK: Dynamically apply built-in Salesforce styling classes
+            cellAttributes: {
+                class: { fieldName: 'statusClass' },
+                alignment: 'center'
+            }
+        }
+    ];
+
+    @wire(getRecords)
+    contacts(result) {
+        if (result.data) {
+            this.data = result.data.map(item => {
+                // Determine the correct SLDS badge utility color class based on Status
+                let sldsClass = 'slds-badge ';
+                if (item.Status__c === 'Completed') {
+                    sldsClass += 'slds-theme_success'; // Green
+                } else if (item.Status__c === 'In Processing') {
+                    sldsClass += 'slds-theme_warning'; // Orange/Yellow
+                } else if (item.Status__c === 'In Queue') {
+                    sldsClass += 'slds-theme_error'; // Red
+                }
+
+                return {
+                    ...item,
+                    Waiting_Time_Formatted__c: item.Waiting_Time__c ? `${item.Waiting_Time__c} min` : '',
+                    statusClass: sldsClass // Injects the class string into the row data
+                };
+            });
+            this.error = undefined;
+        } else if (result.error) {
+            this.error = result.error;
+            this.data = undefined;
+        }
+    }
+
+    doSorting(event) {
+        this.sortBy = event.detail.fieldName;
+        this.sortDirection = event.detail.sortDirection;
+        this.sortData(this.sortBy, this.sortDirection);
+    }
+
+    sortData(fieldname, direction) {
+        let parseData = JSON.parse(JSON.stringify(this.data));
+        let keyValue = (a) => a[fieldname];
+        let isReverse = direction === 'asc' ? 1 : -1;
+
+        parseData.sort((x, y) => {
+            x = keyValue(x) ? keyValue(x) : '';
+            y = keyValue(y) ? keyValue(y) : '';
+            return isReverse * ((x > y) - (y > x));
+        });
+        this.data = parseData;
+    }
+
+    openStandardNewRecordPage() {
+        this[NavigationMixin.Navigate]({
+            type: 'standard__objectPage',
+            attributes: {
+                objectApiName: 'CarWaitingList__c', 
+                actionName: 'new'
+            }
+        });
+    }
+}
+-------------------------------------------------
+// CSS
+-------------------------------------------------
+-------------------------------------------------
+// APEX
+-------------------------------------------------
+  public with sharing class CarWashApexController {
+    @AuraEnabled(cacheable=true)
+    public static List <CarWaitingList__c> getRecords() {
+        List<CarWaitingList__c> waitList = [ SELECT Id, Name, Customer_Name__c, Car_Type__c, Washing_Center__c, Waiting_Time__c, Cost__c, Status__c
+                                   FROM CarWaitingList__c
+                                   LIMIT 10 ];
+        return waitList;
+    }   
+
+    @AuraEnabled(cacheable=true)
+    public static List<CarWaitingList__c> getWaitingList() {
+        return [SELECT Id, Name, Customer_Name__c FROM CarWaitingList__c
+        WHERE Washing_Center__c ='W-1'  ORDER BY CreatedDate ASC];
+    }
+}
