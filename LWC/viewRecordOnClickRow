@@ -1,0 +1,215 @@
+-------------------------------------------------
+// HTML
+-------------------------------------------------
+<template>
+    <lightning-card title="Account List with onclick view action" icon-name="standard:account">
+        <div class="slds-var-p-around_medium">
+            <template if:true={accounts}>
+                <ul class="slds-has-dividers_bottom-space">
+                    <template for:each={accounts} for:item="acc">
+                        <li key={acc.Id} 
+                            class="slds-item slds-var-p-around_small list-row" 
+                            data-id={acc.Id} 
+                            onclick={handleRowClick}>
+                            <div class="slds-grid slds-grid_vertical-align-center">
+                                <div class="slds-col">
+                                    <p class="slds-text-heading_small slds-text-link">{acc.Name}</p>
+                                    <p class="slds-text-color_weak">Industry: {acc.Industry} | Phone: {acc.Phone}</p>
+                                </div>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </template>
+            <template if:false={accounts}>
+                <lightning-spinner alternative-text="Loading" size="medium"></lightning-spinner>
+            </template>
+        </div>
+    </lightning-card>
+</template>
+-------------------------------------------------
+// JS
+-------------------------------------------------
+import { LightningElement, wire, track } from 'lwc';
+import { NavigationMixin } from 'lightning/navigation';
+import getAccounts from '@salesforce/apex/AddAccountController.getAccounts';
+
+export default class ViewRecordOnClickRow extends NavigationMixin(LightningElement) {
+    @track accounts = [];
+    @track error;
+    pageSize = 10;
+    pageNumber = 1;
+    totalCount = 0; 
+
+    @wire(getAccounts, { pageSize: '$pageSize', pageNumber: '$pageNumber' })
+    wiredAccounts({ error, data }) {
+        if (data) {
+            // No need to generate asynchronous URLs anymore! Direct mapping is sufficient.
+            this.accounts = data.records;
+            this.totalCount = data.totalCount;
+            this.error = undefined;
+        } else if (error) {
+            this.error = error;
+            this.accounts = [];
+        }
+    }
+
+    // Capture click event from the list item
+    handleRowClick(event) {
+        // Grab the Account ID stored on the HTML element's data attribute
+        const accountId = event.currentTarget.dataset.id;
+
+        if (accountId) {
+            this[NavigationMixin.Navigate]({
+                type: 'standard__recordPage',
+                attributes: {
+                    recordId: accountId,
+                    objectApiName: 'Account',
+                    actionName: 'view'
+                }
+            });
+        }
+    }
+}
+-------------------------------------------------
+// APEX
+-------------------------------------------------
+public with sharing class AddAccountController {
+    
+    public class PagedResult {
+        @AuraEnabled public Integer totalCount { get; set; }
+        @AuraEnabled public List<Account> records { get; set; }
+    }
+    
+    @AuraEnabled(cacheable=true)
+    public static PagedResult getAccounts(Integer pageSize, Integer pageNumber) {
+        PagedResult result = new PagedResult();
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        result.totalCount = [SELECT COUNT() FROM Account];
+        result.records = [SELECT Id, Name, Phone, Industry 
+                          FROM Account 
+                          ORDER BY CreatedDate DESC, Name 
+                          LIMIT :pageSize 
+                          OFFSET :offset];
+        
+        return result;
+    }
+    
+    @AuraEnabled
+    public static Account createAccount(String name, String phone, String industry) {
+        try {
+            Account acc = new Account(Name = name, Phone = phone, Industry = industry);
+            insert acc;
+            return acc;
+        } catch(Exception e) {
+            throw new AuraHandledException(e.getMessage());
+        }
+    }
+    
+    
+    @AuraEnabled(cacheable=true)
+    public static AccountWrapper getAccountsWithIndustry(Integer pageSize, Integer pageNumber, List<String> industries) {
+        // Calculate dynamic row offset for pagination
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        // Base queries
+        String countQuery = 'SELECT COUNT() FROM Account';
+        String dataQuery = 'SELECT Id, Name, Phone, Industry FROM Account';
+        String whereClause = '';
+        
+        // 1. Append WHERE filter using the 'IN' operator if industry selections exist
+        if (industries != null && !industries.isEmpty()) {
+            whereClause = ' WHERE Industry IN :industries';
+        }
+        
+        // Get total counts matching the filter for accurate pagination numbers
+        Integer totalCount = Database.countQuery(countQuery + whereClause);
+        
+        // Fetch the paginated chunk of records
+        dataQuery += whereClause + ' LIMIT :pageSize OFFSET :offset';
+        List<Account> records = Database.query(dataQuery);
+        
+        return new AccountWrapper(records, totalCount);
+    }
+    
+    // Wrapper class structure remains the same
+    public class AccountWrapper {
+        @AuraEnabled public List<Account> records;
+        @AuraEnabled public Integer totalCount;
+        
+        public AccountWrapper(List<Account> records, Integer totalCount) {
+            this.records = records;
+            this.totalCount = totalCount;
+        }
+    }
+    
+    @AuraEnabled(cacheable=true)
+    public static AccounttWrapper getAccountsWithFilters(
+        Integer pageSize, 
+        Integer pageNumber, 
+        String searchName, 
+        String searchOther,
+        String sortBy,
+        String sortDirection
+    ) {
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        // Base Query Pieces
+        String countQuery = 'SELECT COUNT() FROM Account';
+        String dataQuery = 'SELECT Id, Name, Phone, Industry, Website FROM Account';
+        List<String> whereClauses = new List<String>();
+        
+        // 1. Filter by Name Search Bar
+        if (String.isNotBlank(searchName)) {
+            String nameLike = '%' + String.escapeSingleQuotes(searchName) + '%';
+            whereClauses.add('Name LIKE :nameLike');
+        }
+        
+        // 2. Filter by Other Fields Search Bar (Industry, Phone, Website)
+        if (String.isNotBlank(searchOther)) {
+            String otherLike = '%' + String.escapeSingleQuotes(searchOther) + '%';
+            whereClauses.add('(Industry LIKE :otherLike OR Phone LIKE :otherLike OR Website LIKE :otherLike)');
+        }
+        
+        // Combine WHERE conditions
+        String whereBlock = '';
+        if (!whereClauses.isEmpty()) {
+            whereBlock = ' WHERE ' + String.join(whereClauses, ' AND ');
+        }
+        
+        // Get dynamic total count for pagination
+        Integer totalCount = Database.countQuery(countQuery + whereBlock);
+        
+        // Handle Sorting safely (fallback to Name if null)
+        String sortField = String.isNotBlank(sortBy) ? String.escapeSingleQuotes(sortBy) : 'Name';
+        String sortDir = String.isNotBlank(sortDirection) ? String.escapeSingleQuotes(sortDirection) : 'ASC';
+        
+        // Build final query execution string
+        dataQuery += whereBlock + ' ORDER BY ' + sortField + ' ' + sortDir + ' LIMIT :pageSize OFFSET :offset';
+        List<Account> records = Database.query(dataQuery);
+        
+        return new AccounttWrapper(records, totalCount);
+    }
+    
+    public class AccounttWrapper {
+        @AuraEnabled public List<Account> records;
+        @AuraEnabled public Integer totalCount;
+        
+        public AccounttWrapper(List<Account> records, Integer totalCount) {
+            this.records = records;
+            this.totalCount = totalCount;
+        }
+    }
+}
+
+-------------------------------------------------
+// CSS
+-------------------------------------------------
+.list-row {
+    cursor: pointer;
+    transition: background-color 0.1s linear;
+}
+.list-row:hover {
+    background-color: #f3f3f3;
+}
