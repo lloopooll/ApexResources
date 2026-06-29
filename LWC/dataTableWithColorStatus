@@ -173,3 +173,92 @@ export default class DataTableStatus extends LightningElement {
 -------------------------------------------------
 // Apex
 -------------------------------------------------
+
+public with sharing class ShipmentController {
+
+// Wrapper class to pass both data and total count back to LWC
+public class ShipmentPagedResult {
+    @AuraEnabled public List<testShipment__c> shipments { get; set; }
+    @AuraEnabled public Integer totalRecordCount { get; set; }
+}
+
+@AuraEnabled(cacheable=true)
+public static ShipmentPagedResult getRecordsPaged(String searchKey, String status, Integer pageSize, Integer pageNumber) {
+    ShipmentPagedResult result = new ShipmentPagedResult();
+    
+    // Handle search key format
+    String key = String.isNotBlank(searchKey) ? '%' + searchKey + '%' : '';
+    
+    // Calculate offset
+    Integer offsetValue = (pageNumber - 1) * pageSize;
+    
+    // Base Dynamic WHERE Clause
+    String whereClause = ' WHERE Account__c != null ';
+    if (String.isNotBlank(status)) {
+        whereClause += ' AND Status__c = :status ';
+    }
+    if (String.isNotBlank(searchKey)) {
+        whereClause += ' AND (Name LIKE :key OR Destination_Address__c LIKE :key OR Account__r.Name LIKE :key) ';
+    }
+    
+    // 1. Fetch Total Count for this filter combination
+    String countQuery = 'SELECT COUNT() FROM testShipment__c' + whereClause;
+    result.totalRecordCount = Database.countQuery(countQuery);
+    
+    // 2. Fetch Paginated Records 
+    // FIX 2: Added Account__c to the SELECT clause
+    String recordQuery = 'SELECT Id, Name, Destination_Address__c, Shipment_Type__c, Status__c, COD_Amount__c, Account__c, Account__r.Name ' +
+                            'FROM testShipment__c' + whereClause + 
+                            ' ORDER BY CreatedDate DESC LIMIT :pageSize OFFSET :offsetValue';
+                            
+    result.shipments = Database.query(recordQuery);
+    
+    return result;
+}
+
+
+    public class DataWrapper {
+        @AuraEnabled
+        public List<testShipment__c> records;
+
+        @AuraEnabled
+        public Boolean hasMore;
+    }
+
+    @AuraEnabled
+    public static DataWrapper getShipmentRecords(
+        Integer limitSize,
+        Integer offsetSize
+    ) {
+        DataWrapper response = new DataWrapper();
+
+        List<testShipment__c> accountList = [
+            SELECT Id,
+                Name,
+                Destination_Address__c,
+                Shipment_Type__c,
+                Status__c,
+                COD_Amount__c,
+                Account__c,
+                Account__r.Name 
+            FROM testShipment__c
+            ORDER BY CreatedDate DESC
+            LIMIT :limitSize + 1
+            OFFSET :offsetSize
+        ];
+
+        if (accountList.size() > limitSize) {
+            response.hasMore = true;
+
+            // Remove the extra record
+            accountList.remove(accountList.size() - 1);
+        } else {
+            response.hasMore = false;
+        }
+
+        response.records = accountList;
+
+        return response;
+    }
+}
+
