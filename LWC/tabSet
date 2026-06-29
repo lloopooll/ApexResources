@@ -1,11 +1,179 @@
 -------------------------------------------------
 // HTML
 -------------------------------------------------
+<template>
+    <lightning-tabset>
+        <lightning-tab label="DataTable of Contacts">
+            <lightning-card title="Contacts Overview" icon-name="standard:contact">
+                <div class="slds-m-around_medium">
+                    <template if:true={contacts.length}>
+                        <div style="height: 300px;">
+                            <lightning-datatable
+                                key-field="Id"
+                                data={contacts}
+                                columns={columns}
+                                hide-checkbox-column>
+                            </lightning-datatable>
+                        </div>
+                    </template>
 
+                    <template if:true={error}>
+                        <div class="slds-text-color_error">Error loading contacts data.</div>
+                    </template>
+                </div>
+            </lightning-card>
+        </lightning-tab>
+
+        <lightning-tab label="New Record Form" title="2nd tab extended title">
+            <lightning-card title="Create Custom Account" icon-name="utility:add">
+                <div class="slds-p-around_medium">
+                    
+                    <div class="slds-m-bottom_medium">
+                        <lightning-radio-group 
+                            name="accountTypeGroup"
+                            label="Account Type Selection"
+                            options={accountTypeOptions}
+                            value={selectedAccountType}
+                            type="button"
+                            onchange={handleAccountTypeChange}>
+                        </lightning-radio-group>
+                    </div>
+
+                    <lightning-record-form
+                        object-api-name="Account"
+                        record-type-id={currentRecordTypeId}
+                        layout-type="Full"
+                        mode="edit"
+                        onsuccess={handleFormSuccess}
+                        onerror={handleFormError}>
+                    </lightning-record-form>
+
+                </div>
+            </lightning-card>
+
+            
+        </lightning-tab>
+    </lightning-tabset>
+</template>
 -------------------------------------------------
 // JS
 -------------------------------------------------
+import { LightningElement, wire, track } from 'lwc';
+import { NavigationMixin } from 'lightning/navigation';
+import { refreshApex } from '@salesforce/apex';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import getContactList from '@salesforce/apex/TabsetController.getContactList';
 
+import { getObjectInfo } from 'lightning/uiObjectInfoApi';
+import ACCOUNT_OBJECT from '@salesforce/schema/Account';
+
+export default class TabsetForCardAndAdd extends NavigationMixin(LightningElement) {
+    @track contacts = [];
+    @track error;
+    wiredContactsResult;
+    accountRecordTypes;
+
+    // Track the selected value of the radio button group
+    @track selectedAccountType = 'Business'; 
+
+    // Radio Group Button Options Configuration
+    accountTypeOptions = [
+        { label: 'Business Account 🏢', value: 'Business' },
+        { label: 'Person Account 👤', value: 'PersonAccount' }
+    ];
+
+    columns = [
+        { label: 'Contact Name', fieldName: 'Name' },
+        { label: 'Email', fieldName: 'Email', type: 'email' },
+        { 
+            label: 'Account Name', 
+            fieldName: 'AccountUrl',
+            type: 'url',
+            typeAttributes: { 
+                label: { fieldName: 'AccountName' },
+                target: '_blank' 
+            }
+        }
+    ];
+
+    @wire(getContactList)
+    wiredContacts(result) {
+        this.wiredContactsResult = result;
+        const { error, data } = result;
+        if (data) {
+            this.contacts = data.map(record => {
+                return {
+                    ...record,
+                    AccountName: record.Account ? record.Account.Name : '',
+                    AccountUrl: record.AccountId ? `/lightning/r/Account/${record.AccountId}/view` : ''
+                };
+            });
+            this.error = undefined;
+        } else if (error) {
+            this.error = error;
+            this.contacts = [];
+        }
+    }
+
+    @wire(getObjectInfo, { objectApiName: ACCOUNT_OBJECT })
+    wiredObjectInfo({ error, data }) {
+        if (data) {
+            this.accountRecordTypes = data.recordTypeInfos;
+        }
+    }
+
+    // Capture the value from the radio button click
+    handleAccountTypeChange(event) {
+        this.selectedAccountType = event.detail.value;
+    }
+
+    // Dynamic Record Type Evaluator using the radio selection string
+    get currentRecordTypeId() {
+        if (!this.accountRecordTypes) return null;
+
+        const isPerson = this.selectedAccountType === 'PersonAccount';
+
+        // Find match based on standard API properties or Developer Names
+        const rtInfo = Object.values(this.accountRecordTypes).find(rt => {
+            if (isPerson) {
+                return rt.personAccountInfo === true || rt.developerName === 'PersonAccount';
+            }
+            return rt.personAccountInfo === false && rt.master === false || rt.developerName === 'Business';
+        });
+
+        // Fallback to Master Record Type if no custom Business Record Type exists
+        if (!rtInfo && !isPerson) {
+            const masterRt = Object.values(this.accountRecordTypes).find(rt => rt.master === true);
+            return masterRt ? masterRt.recordTypeId : null;
+        }
+        
+        return rtInfo ? rtInfo.recordTypeId : null;
+    }
+
+    handleFormSuccess(event) {
+        this.dispatchEvent(
+            new ShowToastEvent({
+                title: 'Success',
+                message: `Account created successfully with ID: ${event.detail.id}`,
+                variant: 'success'
+            })
+        );
+        if (this.wiredContactsResult) {
+            refreshApex(this.wiredContactsResult);
+        }
+    }
+
+    handleFormError(event) {
+        const errorMessage = event.detail.detail ? event.detail.detail : event.detail.message;
+        this.dispatchEvent(
+            new ShowToastEvent({
+                title: 'Error Creating Record',
+                message: errorMessage,
+                variant: 'error'
+            })
+        );
+    }
+}
 -------------------------------------------------
 // CSS
 -------------------------------------------------
@@ -13,3 +181,13 @@
 -------------------------------------------------
 // Apex
 -------------------------------------------------
+public with sharing class TabsetController {
+
+    @AuraEnabled(cacheable=true)
+    public static List<Contact> getContactList() {
+        return [SELECT Id, Name, Email, AccountId, Account.Name 
+                FROM Contact 
+                WHERE AccountId != null 
+                LIMIT 50];
+    }
+}
