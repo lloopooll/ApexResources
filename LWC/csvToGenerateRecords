@@ -1,0 +1,157 @@
+-------------------------------------------------
+// HTML
+-------------------------------------------------
+  <template>
+    <lightning-card title="Upload CSV to Create Accounts" icon-name="utility:upload">
+        <div class="slds-m-around_medium">
+            <template if:true={isLoading}>
+                <lightning-spinner alternative-text="Processing File" size="medium"></lightning-spinner>
+            </template>
+
+            <div class="slds-notify slds-notify_alert slds-alert_warning slds-m-bottom_medium" role="alert">
+                <h2>Expected Header Format: <strong>Name, Phone, Industry, Website</strong></h2>
+            </div>
+
+            <lightning-input 
+                type="file" 
+                accept=".csv" 
+                label="Choose CSV File" 
+                onchange={handleFileChange}>
+            </lightning-input>
+
+            <template if:true={fileName}>
+                <p class="slds-m-top_small slds-text-color_weak">Selected File: {fileName}</p>
+            </template>
+
+            <div class="slds-m-top_medium">
+                <lightning-button 
+                    label="Generate Records" 
+                    variant="brand" 
+                    icon-name="utility:add"
+                    onclick={handleUpload}
+                    disabled={isFileDisabled}>
+                </lightning-button>
+            </div>
+        </div>
+    </lightning-card>
+</template>
+-------------------------------------------------
+// JS
+-------------------------------------------------
+import { LightningElement, track } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import uploadCSVRows from '@salesforce/apex/CSVUploadController.uploadCSVRows';
+
+export default class CsvRecordUploader extends LightningElement {
+    @track fileName = '';
+    @track isLoading = false;
+    
+    fileReader;
+    fileRawData;
+
+    // Returns true to lock button if a file isn't uploaded yet
+    get isFileDisabled() {
+        return !this.fileRawData;
+    }
+
+    // Handles the selection of a file
+    handleFileChange(event) {
+        if (event.target.files.length > 0) {
+            const file = event.target.files[0];
+            this.fileName = file.name;
+            
+            // Instantiate standard browser file reader
+            this.fileReader = new FileReader();
+            
+            this.fileReader.onloadend = () => {
+                // Split off the metadata tag prefix (e.g. "data:text/csv;base64,")
+                const base64Content = this.fileReader.result.split(',')[1];
+                this.fileRawData = base64Content;
+            };
+
+            // Read the file as a DataURL format structure
+            this.fileReader.readAsDataURL(file);
+        }
+    }
+
+    // Sends Base64 context payload to Salesforce Apex
+    handleUpload() {
+        if (!this.fileRawData) return;
+
+        this.isLoading = true;
+
+        uploadCSVRows({ base64Data: this.fileRawData })
+            .then(result => {
+                this.showToast('Success', result, 'success');
+                this.fileRawData = null;
+                this.fileName = '';
+            })
+            .catch(error => {
+                this.showToast('Error processing file', error.body.message, 'error');
+            })
+            .finally(() => {
+                this.isLoading = false;
+            });
+    }
+
+    showToast(title, message, variant) {
+        this.dispatchEvent(new ShowToastEvent({ title, message, variant }));
+    }
+}
+-------------------------------------------------
+// CSS
+-------------------------------------------------
+  
+-------------------------------------------------
+// APEX
+-------------------------------------------------
+  public with sharing class CSVUploadController {
+    @AuraEnabled
+    public static String uploadCSVRows(String base64Data) {
+        try {
+            // 1. Decode the Base64 file string sent from the LWC
+            Blob fileBlob = EncodingUtil.base64Decode(base64Data);
+            String csvString = fileBlob.toString();
+            
+            // 2. Split file content by line breaks
+            List<String> csvLines = csvString.split('\n');
+            if (csvLines.isEmpty() || csvLines.size() <= 1) {
+                throw new AuraHandledException('The uploaded CSV file is empty.');
+            }
+
+            List<Account> accountsToInsert = new List<Account>();
+
+            // 3. Loop through lines (skipping the header at index 0)
+            // Example CSV Header Format: Name,Phone,Industry,Website
+            for (Integer i = 1; i < csvLines.size(); i++) {
+                String line = csvLines[i].trim();
+                if (String.isBlank(line)) {
+                    continue;
+                }
+                
+                List<String> csvRowValues = line.split(',');
+                
+                // Safety check: Make sure your CSV row matches expected columns
+                if (csvRowValues.size() >= 4) {
+                    Account acc = new Account();
+                    acc.Name     = csvRowValues[0].trim();
+                    acc.Phone    = csvRowValues[1].trim();
+                    acc.Industry = csvRowValues[2].trim();
+                    acc.Website  = csvRowValues[3].trim();
+                    accountsToInsert.add(acc);
+                }
+            }
+
+            // 4. Batch insert your mapped records safely
+            if (!accountsToInsert.isEmpty()) {
+                insert accountsToInsert;
+                return accountsToInsert.size() + ' Accounts created successfully!';
+            } else {
+                return 'No valid rows found to process.';
+            }
+
+        } catch (Exception ex) {
+            throw new AuraHandledException('Error processing CSV: ' + ex.getMessage());
+        }
+    }
+}
