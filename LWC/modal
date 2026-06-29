@@ -1,0 +1,499 @@
+-------------------------------------------------
+// HTML
+-------------------------------------------------
+<template>
+    <lightning-card title="Unified ShipSmart Control Center" icon-name="standard:contact">
+
+        <div slot="actions">
+            <lightning-button label="New" icon-name="utility:add" variant="brand"
+                onclick={openStandardNewRecordPage}></lightning-button>
+        </div>
+
+        <lightning-card>
+            <div
+                class="slds-m-around_medium slds-grid slds-grid_vertical-align-center slds-grid_align-spread slds-wrap">
+
+                <div class="slds-col slds-m-bottom_x-small slds-small-m-bottom_none">
+                    <lightning-button-group>
+                        <lightning-button label="All" variant={allButtonVariant} data-industry=""
+                            onclick={handleIndustryFilter}>
+                        </lightning-button>
+                        <lightning-button label="Pending" variant={pendingButtonVariant} data-industry="Pending"
+                            onclick={handleIndustryFilter}>
+                        </lightning-button>
+                        <lightning-button label="Delivered" variant={deliveredButtonVariant} data-industry="Delivered"
+                            onclick={handleIndustryFilter}>
+                        </lightning-button>
+                        <lightning-button label="Failed" variant={failedButtonVariant} data-industry="Failed"
+                            onclick={handleIndustryFilter}>
+                        </lightning-button>
+                    </lightning-button-group>
+                </div>
+
+                <div class="slds-col slds-size_1-of-1 slds-small-size_2-of-5">
+                    <lightning-input type="search" variant="label-hidden"
+                        placeholder="Search by Name, Email, or Website..." value={searchKey}
+                        onchange={handleSearchChange}>
+                    </lightning-input>
+                </div>
+            </div>
+
+            <div class="slds-p-horizontal_medium">
+                <lightning-layout multiple-rows="true">
+                    <template if:true={hasRecords}>
+                        <template for:each={paginatedContacts} for:item="con">
+                            <lightning-layout-item key={con.Id} size="12" small-size="6" medium-size="4"
+                                class="slds-p-around_small five-cols-per-row">
+                                <div class="slds-box slds-box_x-small slds-theme_default slds-position_relative">
+                                    <div class="slds-media slds-media_center">
+                                        <div class="slds-media__figure">
+                                            <lightning-icon icon-name="standard:contact" size="medium"></lightning-icon>
+                                        </div>
+                                        <div class="slds-media__body">
+                                            <h2 class="slds-text-heading_small slds-grid slds-grid_vertical-align-center"
+                                                title={con.Name}>
+                                                <span class="slds-truncate slds-m-right_xx-small">{con.Name}</span>
+
+                                                <template if:true={con.isExpress}>
+                                                    <img src={rocketIcon} alt="Express Shipment"
+                                                        title="Express Shipment"
+                                                        class="custom-rocket-icon slds-m-left_xx-small" />
+                                                </template>
+                                            </h2>
+
+                                            <p class="slds-text-body_small slds-truncate">Destination Address:
+                                                {con.Destination_Address__c}</p>
+                                            <p class="slds-text-body_small slds-truncate">Shipment Type:
+                                                {con.Shipment_Type__c}</p>
+                                            <p class="slds-text-body_small slds-truncate slds-m-vertical_xx-small">
+                                                <span>Status: </span>
+                                                <span class={con.statusClass}>{con.Status__c}</span>
+                                            </p>
+                                            <p class="slds-text-body_small slds-truncate">COD Amount:
+                                                {con.COD_Amount__c}</p>
+                                            <p
+                                                class="slds-text-body_small slds-truncate slds-grid slds-grid_vertical-align-center">
+                                                <span>Account:&nbsp;</span>
+                                                <template if:true={con.Account__c}>
+                                                    <span class="slds-grid slds-grid_vertical-align-center">
+                                                        <a href="javascript:void(0);" data-account-id={con.Account__c}
+                                                            onclick={handleAccountClick}>
+                                                            {con.Account__r.Name}
+                                                        </a>
+                                                        <lightning-button-icon icon-name="utility:edit" variant="bare"
+                                                            alternative-text="Change Linked Account"
+                                                            title="Change Linked Account" data-shipment-id={con.Id}
+                                                            onclick={handlePencilClick} class="slds-m-left_xx-small">
+                                                        </lightning-button-icon>
+                                                    </span>
+                                                </template>
+                                                <template if:false={con.Account__c}>
+                                                    <span class="slds-grid slds-grid_vertical-align-center">
+                                                        <span class="slds-text-color_weak">None</span>
+                                                        <lightning-button-icon icon-name="utility:edit" variant="bare"
+                                                            alternative-text="Link Account" title="Link Account"
+                                                            data-shipment-id={con.Id} onclick={handlePencilClick}
+                                                            class="slds-m-left_xx-small">
+                                                        </lightning-button-icon>
+                                                    </span>
+                                                </template>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </lightning-layout-item>
+                        </template>
+                    </template>
+
+                    <template if:false={hasRecords}>
+                        <div
+                            class="slds-align_absolute-center slds-m-vertical_large slds-text-heading_small slds-text-color_weak">
+                            No matching records found.
+                        </div>
+                    </template>
+                </lightning-layout>
+
+                <div class="slds-m-top_medium slds-grid slds-grid_align-center slds-grid_vertical-align-center">
+                    <lightning-button label="Previous" icon-name="utility:chevronleft" variant="neutral"
+                        disabled={isFirstPage} onclick={handlePreviousPage} class="slds-m-right_small">
+                    </lightning-button>
+
+                    <span class="slds-text-body_medium slds-m-horizontal_small">
+                        Page <strong>{pageNumber}</strong> of {totalPages}
+                    </span>
+
+                    <lightning-button label="Next" icon-name="utility:chevronright" variant="neutral"
+                        icon-position="right" disabled={isLastPage} onclick={handleNextPage} class="slds-m-left_small">
+                    </lightning-button>
+                </div>
+            </div>
+
+            <template if:true={isModalOpen}>
+                <section role="dialog" tabindex="-1" aria-modal="true" class="slds-modal slds-fade-in-open">
+                    <div class="slds-modal__container">
+                        <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse"
+                            title="Close" onclick={closeModal}>
+                            <lightning-icon icon-name="utility:close" alternative-text="close" variant="inverse"
+                                size="small"></lightning-icon>
+                        </button>
+                        <header class="slds-modal__header">
+                            <h2 class="slds-modal__title slds-hyphenate">{modalTitle}</h2>
+                        </header>
+
+                        <div class="slds-modal__content slds-p-around_medium">
+                            <template if:true={isShipmentMode}>
+                                <lightning-record-edit-form record-id={selectedShipmentId}
+                                    object-api-name="testShipment__c" onsuccess={handleSuccess}>
+                                    <lightning-messages></lightning-messages>
+                                    <div class="slds-grid slds-wrap">
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-output-field field-name="Name"></lightning-output-field>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-input-field field-name="Account__c"></lightning-input-field>
+                                        </div>
+                                    </div>
+                                    <footer class="slds-modal__footer slds-m-top_medium slds-p-right_none">
+                                        <lightning-button class="slds-m-right_small" label="Cancel"
+                                            onclick={closeModal}></lightning-button>
+                                        <lightning-button type="submit" variant="brand"
+                                            label="Save Assignment"></lightning-button>
+                                    </footer>
+                                </lightning-record-edit-form>
+                            </template>
+
+                            <template if:true={isAccountMode}>
+                                <lightning-record-edit-form record-id={selectedAccountId} object-api-name="Account"
+                                    onsuccess={handleSuccess}>
+                                    <lightning-messages></lightning-messages>
+                                    <div class="slds-grid slds-wrap">
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-output-field field-name="Name"></lightning-output-field>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-output-field field-name="Phone"></lightning-output-field>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-output-field field-name="Website"></lightning-output-field>
+                                        </div>
+                                        <div class="slds-col slds-size_1-of-2 slds-p-around_x-small">
+                                            <lightning-input-field field-name="Industry"></lightning-input-field>
+                                        </div>
+                                    </div>
+                                    <footer class="slds-modal__footer slds-m-top_medium slds-p-right_none">
+                                        <lightning-button class="slds-m-right_small" label="Cancel"
+                                            onclick={closeModal}></lightning-button>
+                                        <lightning-button type="submit" variant="brand"
+                                            label="Save Account Details"></lightning-button>
+                                    </footer>
+                                </lightning-record-edit-form>
+                            </template>
+                        </div>
+                    </div>
+                </section>
+                <div class="slds-backdrop slds-backdrop_open" role="presentation"></div>
+            </template>
+        </lightning-card>
+    </lightning-card>
+</template>
+-------------------------------------------------
+// JS
+-------------------------------------------------
+import { LightningElement, wire, track } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import { NavigationMixin } from 'lightning/navigation'; // Added for standard record creation page access
+import { refreshApex } from '@salesforce/apex';
+import getRecordsPaged from '@salesforce/apex/ShipmentController.getRecordsPaged';
+import ROCKET_ICON_URL from '@salesforce/resourceUrl/rocketIcon';
+
+export default class CardsWithModalAndEditbutton extends NavigationMixin(LightningElement) {
+    @track isModalOpen = false;
+    @track selectedShipmentId;
+    @track selectedAccountId;
+    @track modalMode = ''; // 'shipment' or 'account'
+
+    @track searchKey = '';
+    @track selectedStatus = '';
+    @track pageNumber = 1;
+    pageSize = 10;
+
+    rocketIcon = ROCKET_ICON_URL;
+
+    totalRecordCount = 0;
+    wiredRecordsResult;
+    refreshIntervalId;
+
+    @wire(getRecordsPaged, {
+        searchKey: '$searchKey',
+        status: '$selectedStatus',
+        pageSize: '$pageSize',
+        pageNumber: '$pageNumber'
+    })
+    wiredShipments(result) {
+        this.wiredRecordsResult = result;
+        if (result.data) {
+            this.totalRecordCount = result.data.totalRecordCount;
+        } else if (result.error) {
+            this.showToast('Error', 'Failed to retrieve shipments', 'error');
+        }
+    }
+
+    connectedCallback() {
+        this.refreshIntervalId = setInterval(() => {
+            this.autoRefreshData();
+        }, 30000);
+    }
+
+    disconnectedCallback() {
+        if (this.refreshIntervalId) {
+            clearInterval(this.refreshIntervalId);
+        }
+    }
+
+    async autoRefreshData() {
+        if (this.wiredRecordsResult && !this.isModalOpen) {
+            await refreshApex(this.wiredRecordsResult);
+        }
+    }
+
+    // Opens the standard Salesforce modal to create a new testShipment__c record
+    openStandardNewRecordPage() {
+        this[NavigationMixin.Navigate]({
+            type: 'standard__objectPage',
+            attributes: {
+                objectApiName: 'testShipment__c',
+                actionName: 'new'
+            }
+        });
+    }
+
+    // Search Logic
+    handleSearchChange(event) {
+        this.searchKey = event.target.value;
+        this.pageNumber = 1;
+    }
+
+    // Filter Logic
+    handleIndustryFilter(event) {
+        this.selectedStatus = event.target.dataset.industry;
+        this.pageNumber = 1;
+    }
+
+    // Getters mapping background colors dynamically to each shipment status
+    get paginatedContacts() {
+        const shipments = this.wiredRecordsResult?.data?.shipments || [];
+
+        return shipments.map(ship => {
+            let statusClass = 'status-badge ';
+
+            // Dynamic status classes
+            if (ship.Status__c === 'Pending') {
+                statusClass += 'status-pending';
+            } else if (ship.Status__c === 'Delivered') {
+                statusClass += 'status-delivered';
+            } else if (ship.Status__c === 'Failed') {
+                statusClass += 'status-failed';
+            } else {
+                statusClass += 'status-default';
+            }
+
+            return {
+                ...ship,
+                statusClass: statusClass,
+                // Dynamic boolean flag for the icon
+                isExpress: ship.Shipment_Type__c === 'Express'
+            };
+        });
+    }
+
+    get totalPages() {
+        return Math.ceil(this.totalRecordCount / this.pageSize) || 1;
+    }
+
+    get hasRecords() {
+        return this.paginatedContacts.length > 0;
+    }
+
+    get isFirstPage() { return this.pageNumber === 1; }
+    get isLastPage() { return this.pageNumber >= this.totalPages; }
+
+    handlePreviousPage() { if (this.pageNumber > 1) this.pageNumber--; }
+    handleNextPage() { if (this.pageNumber < this.totalPages) this.pageNumber++; }
+
+    get allButtonVariant() { return this.selectedStatus === '' ? 'brand' : 'neutral'; }
+    get pendingButtonVariant() { return this.selectedStatus === 'Pending' ? 'brand' : 'neutral'; }
+    get deliveredButtonVariant() { return this.selectedStatus === 'Delivered' ? 'brand' : 'neutral'; }
+    get failedButtonVariant() { return this.selectedStatus === 'Failed' ? 'brand' : 'neutral'; }
+
+    // Clicked Pencil Icon: Change lookup assignment
+    handlePencilClick(event) {
+        this.selectedShipmentId = event.currentTarget.dataset.shipmentId;
+        this.modalMode = 'shipment';
+        this.isModalOpen = true;
+    }
+
+    // Clicked Account Name Link: View Account Details directly
+    handleAccountClick(event) {
+        this.selectedAccountId = event.currentTarget.dataset.accountId;
+        this.modalMode = 'account';
+        this.isModalOpen = true;
+    }
+
+    // Getters for dynamic modal context layout
+    get isShipmentMode() { return this.modalMode === 'shipment'; }
+    get isAccountMode() { return this.modalMode === 'account'; }
+    get modalTitle() {
+        return this.modalMode === 'shipment' ? 'Update Shipment Assignment' : 'Account Information';
+    }
+
+    closeModal() {
+        this.isModalOpen = false;
+        this.selectedShipmentId = null;
+        this.selectedAccountId = null;
+        this.modalMode = '';
+    }
+
+    handleSuccess() {
+        this.showToast('Success', 'Record updated successfully!', 'success');
+        this.closeModal();
+        return refreshApex(this.wiredRecordsResult);
+    }
+
+    showToast(title, message, variant) {
+        this.dispatchEvent(new ShowToastEvent({ title, message, variant }));
+    }
+}
+-------------------------------------------------
+// CSS
+-------------------------------------------------
+@media (min-width: 1024px) {
+    .five-cols-per-row {
+        flex: 0 0 20% !important;
+        max-width: 20% !important;
+    }
+}
+
+/* Custom Status Badges */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: bold;
+    color: #ffffff !important;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.status-pending {
+    background-color: #ff9f00; /* Orange */
+}
+
+.status-delivered {
+    background-color: #2e7d32; /* Green */
+}
+
+.status-failed {
+    background-color: #d32f2f; /* Red */
+}
+
+.status-default {
+    background-color: #747474; /* Grey fallback */
+}
+
+/* Keeps your custom rocket aligned with the text and properly sized */
+.custom-rocket-icon {
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+    object-fit: contain;
+}
+-------------------------------------------------
+// APEX
+-------------------------------------------------
+public with sharing class ShipmentController {
+
+// Wrapper class to pass both data and total count back to LWC
+public class ShipmentPagedResult {
+    @AuraEnabled public List<testShipment__c> shipments { get; set; }
+    @AuraEnabled public Integer totalRecordCount { get; set; }
+}
+
+@AuraEnabled(cacheable=true)
+public static ShipmentPagedResult getRecordsPaged(String searchKey, String status, Integer pageSize, Integer pageNumber) {
+    ShipmentPagedResult result = new ShipmentPagedResult();
+    
+    // Handle search key format
+    String key = String.isNotBlank(searchKey) ? '%' + searchKey + '%' : '';
+    
+    // Calculate offset
+    Integer offsetValue = (pageNumber - 1) * pageSize;
+    
+    // Base Dynamic WHERE Clause
+    String whereClause = ' WHERE Account__c != null ';
+    if (String.isNotBlank(status)) {
+        whereClause += ' AND Status__c = :status ';
+    }
+    if (String.isNotBlank(searchKey)) {
+        whereClause += ' AND (Name LIKE :key OR Destination_Address__c LIKE :key OR Account__r.Name LIKE :key) ';
+    }
+    
+    // 1. Fetch Total Count for this filter combination
+    String countQuery = 'SELECT COUNT() FROM testShipment__c' + whereClause;
+    result.totalRecordCount = Database.countQuery(countQuery);
+    
+    // 2. Fetch Paginated Records 
+    // FIX 2: Added Account__c to the SELECT clause
+    String recordQuery = 'SELECT Id, Name, Destination_Address__c, Shipment_Type__c, Status__c, COD_Amount__c, Account__c, Account__r.Name ' +
+                            'FROM testShipment__c' + whereClause + 
+                            ' ORDER BY CreatedDate DESC LIMIT :pageSize OFFSET :offsetValue';
+                            
+    result.shipments = Database.query(recordQuery);
+    
+    return result;
+}
+
+
+    public class DataWrapper {
+        @AuraEnabled
+        public List<testShipment__c> records;
+
+        @AuraEnabled
+        public Boolean hasMore;
+    }
+
+    @AuraEnabled
+    public static DataWrapper getShipmentRecords(
+        Integer limitSize,
+        Integer offsetSize
+    ) {
+        DataWrapper response = new DataWrapper();
+
+        List<testShipment__c> accountList = [
+            SELECT Id,
+                Name,
+                Destination_Address__c,
+                Shipment_Type__c,
+                Status__c,
+                COD_Amount__c,
+                Account__c,
+                Account__r.Name 
+            FROM testShipment__c
+            ORDER BY CreatedDate DESC
+            LIMIT :limitSize + 1
+            OFFSET :offsetSize
+        ];
+
+        if (accountList.size() > limitSize) {
+            response.hasMore = true;
+
+            // Remove the extra record
+            accountList.remove(accountList.size() - 1);
+        } else {
+            response.hasMore = false;
+        }
+
+        response.records = accountList;
+
+        return response;
+    }
+}
