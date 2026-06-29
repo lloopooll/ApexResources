@@ -1,11 +1,95 @@
 -------------------------------------------------
 // HTML
 -------------------------------------------------
+<template>
+    <lightning-card title="Inline Edit Datatable (Contacts)" icon-name="standard:contact">
+        
+        <div class="slds-m-around_medium" style="height: 350px;">
+            <template if:true={contacts.length}>
+                
+                <lightning-datatable
+                    key-field="Id"
+                    data={contacts}
+                    columns={columns}
+                    draft-values={draftValues}
+                    onsave={handleSave}
+                    hide-checkbox-column>
+                </lightning-datatable>
 
+            </template>
+            
+            <template if:false={contacts.length}>
+                <div class="slds-text-align_center slds-text-color_weak slds-m-top_medium">
+                    No contacts found.
+                </div>
+            </template>
+        </div>
+
+    </lightning-card>
+</template>
 -------------------------------------------------
 // JS
 -------------------------------------------------
+import { LightningElement, wire, track } from 'lwc';
+import { refreshApex } from '@salesforce/apex';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import getContacts from '@salesforce/apex/InlineEditController.getContacts';
+import updateContacts from '@salesforce/apex/InlineEditController.updateContacts';
 
+// Define columns. Notice the "editable: true" property!
+const COLUMNS = [
+    { label: 'First Name', fieldName: 'FirstName', editable: true },
+    { label: 'Last Name', fieldName: 'LastName', editable: true },
+    { label: 'Email', fieldName: 'Email', type: 'email', editable: true },
+    { label: 'Phone', fieldName: 'Phone', type: 'phone', editable: true }
+];
+
+export default class InlineEditDatatable extends LightningElement {
+    columns = COLUMNS;
+    
+    @track contacts = [];
+    @track draftValues = []; // Holds the unsaved inline edits
+    
+    wiredContactsResult; // Retained to force datatable refreshes
+
+    // 1. Fetch Data
+    @wire(getContacts)
+    wiredContacts(result) {
+        this.wiredContactsResult = result;
+        if (result.data) {
+            this.contacts = result.data;
+        } else if (result.error) {
+            this.showToast('Error', 'Failed to load contacts', 'error');
+        }
+    }
+
+    // 2. Handle the Save Action
+    async handleSave(event) {
+        // Extract the array of modified records from the datatable
+        const updatedFields = event.detail.draftValues;
+
+        try {
+            // Pass the array to Apex to perform the DML update
+            await updateContacts({ contactsForUpdate: updatedFields });
+
+            this.showToast('Success', 'Contacts updated successfully!', 'success');
+
+            // IMPORTANT: Clear the draft values so the yellow highlights disappear
+            this.draftValues = [];
+
+            // Refresh the table to show the newly saved data from the database
+            await refreshApex(this.wiredContactsResult);
+
+        } catch (error) {
+            this.showToast('Error updating records', error.body.message, 'error');
+        }
+    }
+
+    // Utility for toast notifications
+    showToast(title, message, variant) {
+        this.dispatchEvent(new ShowToastEvent({ title, message, variant }));
+    }
+}
 -------------------------------------------------
 // CSS
 -------------------------------------------------
@@ -13,3 +97,27 @@
 -------------------------------------------------
 // Apex
 -------------------------------------------------
+
+public with sharing class InlineEditController {
+    
+    // Fetch initial data
+    @AuraEnabled(cacheable=true)
+    public static List<Contact> getContacts() {
+        return [SELECT Id, FirstName, LastName, Email, Phone 
+                FROM Contact 
+                ORDER BY CreatedDate DESC 
+                LIMIT 10];
+    }
+
+    // Save the edited draft values
+    @AuraEnabled
+    public static void updateContacts(List<Contact> contactsForUpdate) {
+        try {
+            // update allows partial successes if you use Database.update, 
+            // but for simplicity, we use standard DML here.
+            update contactsForUpdate;
+        } catch (Exception e) {
+            throw new AuraHandledException('Error updating records: ' + e.getMessage());
+        }
+    }
+}
