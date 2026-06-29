@@ -1,0 +1,197 @@
+-------------------------------------------------
+// HTML
+-------------------------------------------------
+  <template>
+    <lightning-card title="DataTable with Clickable Links" icon-name="standard:account">
+        <div class="slds-m-around_medium">
+            <template if:true={accounts.length}>
+                <lightning-datatable
+                    key-field="Id"
+                    data={accounts}
+                    columns={columns}
+                    hide-checkbox-column>
+                </lightning-datatable>
+            </template>
+        </div>
+    </lightning-card>
+</template>
+-------------------------------------------------
+// JS
+-------------------------------------------------
+import { LightningElement, wire, track } from 'lwc';
+import { NavigationMixin } from 'lightning/navigation';
+import getAccounts from '@salesforce/apex/AddAccountController.getAccounts';
+
+export default class ViewRecordOnclickRow extends NavigationMixin(LightningElement) {
+    @track accounts = [];
+    @track error;
+    
+    pageSize = 10;
+    pageNumber = 1;
+    totalCount = 0; 
+    wiredAccountsResult; 
+
+    columns = [
+        // Convert the Name column into a clickable navigation link URL
+        { 
+            label: 'Account Name', 
+            fieldName: 'recordLink', 
+            type: 'url',
+            typeAttributes: { 
+                label: { fieldName: 'Name' }, // This ensures the text displays the Account Name
+                target: '_self' 
+            }
+        },
+        { label: 'Phone', fieldName: 'Phone', type: 'phone' },
+        { label: 'Industry', fieldName: 'Industry' }
+    ];
+
+    @wire(getAccounts, { pageSize: '$pageSize', pageNumber: '$pageNumber' })
+    wiredAccounts(result) {
+        this.wiredAccountsResult = result; 
+        const { error, data } = result;
+        if (data) {
+            // Map data to inject a clean relative URL path string attribute
+            this.accounts = data.records.map(record => ({
+                ...record,
+                recordLink: '/' + record.Id
+            }));
+            this.totalCount = data.totalCount;
+            this.error = undefined;
+        } else if (error) {
+            this.error = error;
+            this.accounts = [];
+        }
+    }
+}
+-------------------------------------------------
+// Apex
+-------------------------------------------------
+public with sharing class AddAccountController {
+    
+    public class PagedResult {
+        @AuraEnabled public Integer totalCount { get; set; }
+        @AuraEnabled public List<Account> records { get; set; }
+    }
+    
+    @AuraEnabled(cacheable=true)
+    public static PagedResult getAccounts(Integer pageSize, Integer pageNumber) {
+        PagedResult result = new PagedResult();
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        result.totalCount = [SELECT COUNT() FROM Account];
+        result.records = [SELECT Id, Name, Phone, Industry 
+                          FROM Account 
+                          ORDER BY CreatedDate DESC, Name 
+                          LIMIT :pageSize 
+                          OFFSET :offset];
+        
+        return result;
+    }
+    
+    @AuraEnabled
+    public static Account createAccount(String name, String phone, String industry) {
+        try {
+            Account acc = new Account(Name = name, Phone = phone, Industry = industry);
+            insert acc;
+            return acc;
+        } catch(Exception e) {
+            throw new AuraHandledException(e.getMessage());
+        }
+    }
+    
+    
+    @AuraEnabled(cacheable=true)
+    public static AccountWrapper getAccountsWithIndustry(Integer pageSize, Integer pageNumber, List<String> industries) {
+        // Calculate dynamic row offset for pagination
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        // Base queries
+        String countQuery = 'SELECT COUNT() FROM Account';
+        String dataQuery = 'SELECT Id, Name, Phone, Industry FROM Account';
+        String whereClause = '';
+        
+        // 1. Append WHERE filter using the 'IN' operator if industry selections exist
+        if (industries != null && !industries.isEmpty()) {
+            whereClause = ' WHERE Industry IN :industries';
+        }
+        
+        // Get total counts matching the filter for accurate pagination numbers
+        Integer totalCount = Database.countQuery(countQuery + whereClause);
+        
+        // Fetch the paginated chunk of records
+        dataQuery += whereClause + ' LIMIT :pageSize OFFSET :offset';
+        List<Account> records = Database.query(dataQuery);
+        
+        return new AccountWrapper(records, totalCount);
+    }
+    
+    // Wrapper class structure remains the same
+    public class AccountWrapper {
+        @AuraEnabled public List<Account> records;
+        @AuraEnabled public Integer totalCount;
+        
+        public AccountWrapper(List<Account> records, Integer totalCount) {
+            this.records = records;
+            this.totalCount = totalCount;
+        }
+    }
+    
+    @AuraEnabled(cacheable=true)
+    public static AccounttWrapper getAccountsWithFilters(
+        Integer pageSize, 
+        Integer pageNumber, 
+        String searchName, 
+        String searchOther,
+        String sortBy,
+        String sortDirection
+    ) {
+        Integer offset = (pageNumber - 1) * pageSize;
+        
+        // Base Query Pieces
+        String countQuery = 'SELECT COUNT() FROM Account';
+        String dataQuery = 'SELECT Id, Name, Phone, Industry, Website FROM Account';
+        List<String> whereClauses = new List<String>();
+        
+        // 1. Filter by Name Search Bar
+        if (String.isNotBlank(searchName)) {
+            String nameLike = '%' + String.escapeSingleQuotes(searchName) + '%';
+            whereClauses.add('Name LIKE :nameLike');
+        }
+        
+        // 2. Filter by Other Fields Search Bar (Industry, Phone, Website)
+        if (String.isNotBlank(searchOther)) {
+            String otherLike = '%' + String.escapeSingleQuotes(searchOther) + '%';
+            whereClauses.add('(Industry LIKE :otherLike OR Phone LIKE :otherLike OR Website LIKE :otherLike)');
+        }
+        
+        // Combine WHERE conditions
+        String whereBlock = '';
+        if (!whereClauses.isEmpty()) {
+            whereBlock = ' WHERE ' + String.join(whereClauses, ' AND ');
+        }
+        
+        // Get dynamic total count for pagination
+        Integer totalCount = Database.countQuery(countQuery + whereBlock);
+        
+        // Handle Sorting safely (fallback to Name if null)
+        String sortField = String.isNotBlank(sortBy) ? String.escapeSingleQuotes(sortBy) : 'Name';
+        String sortDir = String.isNotBlank(sortDirection) ? String.escapeSingleQuotes(sortDirection) : 'ASC';
+        
+        // Build final query execution string
+        dataQuery += whereBlock + ' ORDER BY ' + sortField + ' ' + sortDir + ' LIMIT :pageSize OFFSET :offset';
+        List<Account> records = Database.query(dataQuery);
+        
+        return new AccounttWrapper(records, totalCount);
+    }
+    
+    public class AccounttWrapper {
+        @AuraEnabled public List<Account> records;
+        @AuraEnabled public Integer totalCount;
+        
+        public AccounttWrapper(List<Account> records, Integer totalCount) {
+            this.records = records;
+            this.totalCount = totalCount;
+        }
+    }
+}
